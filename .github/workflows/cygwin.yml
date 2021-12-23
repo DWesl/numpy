@@ -23,7 +23,7 @@ jobs:
             python38-devel python38-zipp python38-importlib-metadata
             python38-cython python38-pip python38-wheel python38-cffi
             python38-pytz python38-setuptools python38-pytest
-            python38-hypothesis liblapack-devel libopenblas
+            python38-hypothesis liblapack-devel libopenblas==0.3.18
             gcc-fortran gcc-g++ git dash
       - name: Set Windows PATH
         uses: egor-tensin/cleanup-path@v1
