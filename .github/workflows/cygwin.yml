@@ -1,11 +1,5 @@
 name: Test on Cygwin
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+on: [push, pull_request]
 jobs:
   cygwin_build_test:
     runs-on: windows-latest
