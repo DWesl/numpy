@@ -13,7 +13,7 @@ jobs:
         with:
           platform: x64
           install-dir: 'C:\tools\cygwin'
-          packages: >
+          packages: >-
             python38-devel python38-zipp python38-importlib-metadata
             python38-cython python38-pip python38-wheel python38-cffi
             python38-pytz python38-setuptools python38-pytest
