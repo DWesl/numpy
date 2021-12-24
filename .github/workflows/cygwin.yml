@@ -22,7 +22,7 @@ jobs:
       - name: Set Windows PATH
         uses: egor-tensin/cleanup-path@v1
         with:
-          dirs: 'C:\tools\cygwin\bin;C:\tools\cygwin\lib\lapack'
+          dirs: 'C:\tools\cygwin\lib\lapack;C:\tools\cygwin\bin'
       - name: Verify that bash is Cygwin bash
         run: |
           command bash
