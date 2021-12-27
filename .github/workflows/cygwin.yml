@@ -17,12 +17,15 @@ jobs:
             python38-devel python38-zipp python38-importlib-metadata
             python38-cython python38-pip python38-wheel python38-cffi
             python38-pytz python38-setuptools python38-pytest
-            python38-hypothesis liblapack-devel libopenblas==0.3.18
+            python38-hypothesis liblapack-devel
             gcc-fortran gcc-g++ git dash
       - name: Set Windows PATH
         uses: egor-tensin/cleanup-path@v1
         with:
           dirs: 'C:\tools\cygwin\lib\lapack;C:\tools\cygwin\bin'
+      - name: Remove OpenBLAS
+        run: |
+          dash -c "rm -f /usr/bin/cygblas-0.dll"
       - name: Verify that bash is Cygwin bash
         run: |
           command bash
