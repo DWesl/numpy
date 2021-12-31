@@ -360,9 +360,9 @@ class LinalgSquareTestCase(LinalgTestCase):
         "case",
         [
             case
-            for case in TEST_CASES
+            for case in CASES
             if (
-                    (case.tags & require == {'square'})
+                    (case.tags & {'square'} == {'square'})
                     and not (case.tags & {'generalized', 'size-0'})
             )
         ]
