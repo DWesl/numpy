@@ -356,9 +356,24 @@ class LinalgTestCase:
 
 class LinalgSquareTestCase(LinalgTestCase):
 
-    def test_sq_cases(self):
-        self.check_cases(require={'square'},
-                         exclude={'generalized', 'size-0'})
+    @pytest.mark.parametrize(
+        "case",
+        [
+            case
+            for case in TEST_CASES
+            if (
+                    (case.tags & require == {'square'})
+                    and not (case.tags & {'generalized', 'size-0'})
+            )
+        ]
+    )
+    def test_sq_cases(self, case):
+        try:
+            case.check(self.do)
+        except Exception as e:
+            msg = f'In test case: {case!r}\n\n'
+            msg += traceback.format_exc()
+            raise AssertionError(msg) from e
 
     def test_empty_sq_cases(self):
         self.check_cases(require={'square', 'size-0'},
