@@ -15,6 +15,10 @@ concurrency:
 permissions:
   contents: read # to fetch code (actions/checkout)
 
+defaults:
+  run:
+    shell: 'C:\tools\cygwin\bin\bash.exe -eo pipefail -o igncr {0}'
+
 jobs:
   cygwin_build_test:
     runs-on: windows-latest
@@ -78,9 +82,10 @@ jobs:
       - name: Check Lapack on failure
         if: failure()
         run: |
-          dash -c "ls -l /usr/lib/lapack/*"
-          dash -c "file /usr/lib/lapack/*"
-          dash -c "cygcheck /usr/lib/lapack/*"
+          dash -c "mount"
+          dash -c "ls -l /usr/lib/lapack/* /lib/lapack/*"
+          dash -c "file /usr/lib/lapack/* /lib/lapack/*"
+          dash -c "cygcheck /usr/lib/lapack/* /lib/lapack/*"
       - name: Print installed package versions on failure
         if: failure()
         run: |
