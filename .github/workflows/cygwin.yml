@@ -47,9 +47,16 @@ jobs:
         # Make sure it's the Cygwin one, not a Windows one
         run: |
           dash -c "which python3.12; /usr/bin/python3.12 --version -V"
+      - name: Install python dependencies from PyPI
+        timeout-minutes: 60
+        shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -euxo pipefail {0}"
+        run: |
+          for pkg in build pytest hypothesis pytest-xdist Cython meson-python; do
+              date
+              /usr/bin/python3.12 -m pip install "${pkg}";
+          done
       - name: Build NumPy wheel
         run: |
-          dash -c "/usr/bin/python3.12 -m pip install build pytest hypothesis pytest-xdist Cython meson"
           dash -c "/usr/bin/python3.12 -m build . --wheel -Csetup-args=-Dblas=blas -Csetup-args=-Dlapack=lapack -Csetup-args=-Dcpu-dispatch=none -Csetup-args=-Dcpu-baseline=native"
       - name: Install NumPy from wheel
         run: |
