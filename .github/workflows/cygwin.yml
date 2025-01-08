@@ -68,7 +68,7 @@ jobs:
         shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -eo pipefail {0}"
         run: |
           cd tools
-          /usr/bin/python3.12 -m pytest --pyargs numpy -n2 -m "not slow"
+          /usr/bin/python3.12 -m pytest --pyargs numpy -n2 -m "not slow" -v --verbose
       - name: Upload wheel if tests fail
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         if: failure()
