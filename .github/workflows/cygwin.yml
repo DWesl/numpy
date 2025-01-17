@@ -51,7 +51,7 @@ jobs:
         timeout-minutes: 60
         shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -euxo pipefail {0}"
         run: |
-          for pkg in build pytest hypothesis pytest-xdist Cython meson-python; do
+          for pkg in build pytest hypothesis pytest-xdist Cython meson-python pytest-forked; do
               date
               /usr/bin/python3.12 -m pip install "${pkg}";
           done
@@ -68,7 +68,7 @@ jobs:
         shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -eo pipefail {0}"
         run: |
           cd tools
-          /usr/bin/python3.12 -m pytest --pyargs numpy -n2 -m "not slow" -v --verbose
+          /usr/bin/python3.12 -m pytest --pyargs numpy -n2 -m "not slow" -vvv --verbose --forked
       - name: Upload wheel if tests fail
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         if: failure()
