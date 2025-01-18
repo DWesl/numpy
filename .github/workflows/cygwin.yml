@@ -51,7 +51,7 @@ jobs:
         timeout-minutes: 60
         shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -euxo pipefail {0}"
         run: |
-          for pkg in build pytest hypothesis Cython meson-python; do
+          for pkg in build pytest hypothesis Cython meson-python pytest-xdist; do
               date
               /usr/bin/python3.12 -m pip install "${pkg}";
           done
