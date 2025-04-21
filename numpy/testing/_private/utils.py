@@ -4,6 +4,7 @@ Utility function to facilitate testing.
 """
 import os
 import sys
+import pathlib
 import platform
 import re
 import gc
@@ -19,15 +20,17 @@ import pprint
 import sysconfig
 import concurrent.futures
 import threading
+import importlib.metadata
 
 import numpy as np
 from numpy._core import (
      intp, float32, empty, arange, array_repr, ndarray, isnat, array)
 from numpy import isfinite, isnan, isinf
 import numpy.linalg._umath_linalg
-from numpy._utils import _rename_parameter
+from numpy._core.tests._natype import pd_NA
 
 from io import StringIO
+
 
 __all__ = [
         'assert_equal', 'assert_almost_equal', 'assert_approx_equal',
@@ -42,7 +45,7 @@ __all__ = [
         'HAS_REFCOUNT', "IS_WASM", 'suppress_warnings', 'assert_array_compare',
         'assert_no_gc_cycles', 'break_cycles', 'HAS_LAPACK64', 'IS_PYSTON',
         'IS_MUSL', 'check_support_sve', 'NOGIL_BUILD',
-        'IS_EDITABLE', 'run_threaded',
+        'IS_EDITABLE', 'IS_INSTALLED', 'NUMPY_ROOT', 'run_threaded', 'IS_64BIT',
         ]
 
 
@@ -54,10 +57,40 @@ class KnownFailureException(Exception):
 KnownFailureTest = KnownFailureException  # backwards compat
 verbose = 0
 
+NUMPY_ROOT = pathlib.Path(np.__file__).parent
+
+try:
+    np_dist = importlib.metadata.distribution('numpy')
+except importlib.metadata.PackageNotFoundError:
+    IS_INSTALLED = IS_EDITABLE = False
+else:
+    IS_INSTALLED = True
+    try:
+        if sys.version_info >= (3, 13):
+            IS_EDITABLE = np_dist.origin.dir_info.editable
+        else:
+            # Backport importlib.metadata.Distribution.origin
+            import json, types  # noqa: E401
+            origin = json.loads(
+                np_dist.read_text('direct_url.json') or '{}',
+                object_hook=lambda data: types.SimpleNamespace(**data),
+            )
+            IS_EDITABLE = origin.dir_info.editable
+    except AttributeError:
+        IS_EDITABLE = False
+
+    # spin installs numpy directly via meson, instead of using meson-python, and
+    # runs the module by setting PYTHONPATH. This is problematic because the
+    # resulting installation lacks the Python metadata (.dist-info), and numpy
+    # might already be installed on the environment, causing us to find its
+    # metadata, even though we are not actually loading that package.
+    # Work around this issue by checking if the numpy root matches.
+    if not IS_EDITABLE and np_dist.locate_file('numpy') != NUMPY_ROOT:
+        IS_INSTALLED = False
+
 IS_WASM = platform.machine() in ["wasm32", "wasm64"]
 IS_PYPY = sys.implementation.name == 'pypy'
 IS_PYSTON = hasattr(sys, "pyston_version_info")
-IS_EDITABLE = not bool(np.__path__) or 'editable' in np.__path__[0]
 HAS_REFCOUNT = getattr(sys, 'getrefcount', None) is not None and not IS_PYSTON
 HAS_LAPACK64 = numpy.linalg._umath_linalg._ilp64
 
@@ -71,6 +104,7 @@ if 'musl' in _v:
     IS_MUSL = True
 
 NOGIL_BUILD = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+IS_64BIT = np.dtype(np.intp).itemsize == 8
 
 def assert_(val, msg=''):
     """
@@ -831,9 +865,8 @@ def assert_array_compare(comparison, x, y, err_msg='', verbose=True, header='',
             n_mismatch = reduced.size - reduced.sum(dtype=intp)
             n_elements = flagged.size if flagged.ndim != 0 else reduced.size
             percent_mismatch = 100 * n_mismatch / n_elements
-            remarks = [
-                'Mismatched elements: {} / {} ({:.3g}%)'.format(
-                    n_mismatch, n_elements, percent_mismatch)]
+            remarks = [f'Mismatched elements: {n_mismatch} / {n_elements} '
+                       f'({percent_mismatch:.3g}%)']
 
             with errstate(all='ignore'):
                 # ignore errors for non-numeric types
@@ -2620,8 +2653,9 @@ def _parse_size(size_str):
                 'kb': 1000, 'mb': 1000**2, 'gb': 1000**3, 'tb': 1000**4,
                 'kib': 1024, 'mib': 1024**2, 'gib': 1024**3, 'tib': 1024**4}
 
-    size_re = re.compile(r'^\s*(\d+|\d+\.\d+)\s*({0})\s*$'.format(
-        '|'.join(suffixes.keys())), re.I)
+    pipe_suffixes = "|".join(suffixes.keys())
+
+    size_re = re.compile(fr'^\s*(\d+|\d+\.\d+)\s*({pipe_suffixes})\s*$', re.I)
 
     m = size_re.match(size_str.lower())
     if not m or m.group(2) not in suffixes:
@@ -2701,8 +2735,23 @@ def run_threaded(func, max_workers=8, pass_count=False,
                 barrier = threading.Barrier(max_workers)
                 args.append(barrier)
             if pass_count:
-                futures = [tpe.submit(func, i, *args) for i in range(max_workers)]
+                all_args = [(func, i, *args) for i in range(max_workers)]
             else:
-                futures = [tpe.submit(func, *args) for _ in range(max_workers)]
+                all_args = [(func, *args) for i in range(max_workers)]
+            try:
+                futures = []
+                for arg in all_args:
+                    futures.append(tpe.submit(*arg))
+            finally:
+                if len(futures) < max_workers and pass_barrier:
+                    barrier.abort()
             for f in futures:
                 f.result()
+
+
+def get_stringdtype_dtype(na_object, coerce=True):
+    # explicit is check for pd_NA because != with pd_NA returns pd_NA
+    if na_object is pd_NA or na_object != "unset":
+        return np.dtypes.StringDType(na_object=na_object, coerce=coerce)
+    else:
+        return np.dtypes.StringDType(coerce=coerce)
