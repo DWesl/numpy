@@ -1,17 +1,6 @@
 from collections.abc import Callable, Sequence
-from typing import (
-    Any,
-    Final,
-    TypeAlias,
-    overload,
-    TypeVar,
-    Literal as L,
-    SupportsAbs,
-    SupportsIndex,
-    NoReturn,
-    TypeGuard,
-)
-from typing_extensions import Unpack
+from typing import Any, Final, Never, NoReturn, SupportsAbs, SupportsIndex, TypeAlias, TypeGuard, TypeVar, Unpack, overload
+from typing import Literal as L
 
 import numpy as np
 from numpy import (
@@ -109,7 +98,7 @@ from numpy._typing import (
     _ArrayLikeComplex_co,
     _ArrayLikeTD64_co,
     _ArrayLikeObject_co,
-    _ArrayLikeUnknown,
+    _NestedSequence,
 )
 
 __all__ = [
@@ -425,21 +414,19 @@ def full_like(
     device: None | L["cpu"] = ...,
 ) -> NDArray[Any]: ...
 
+#
+@overload
+def count_nonzero(a: ArrayLike, axis: None = None, *, keepdims: L[False] = False) -> int: ...
+@overload
+def count_nonzero(a: _ScalarLike_co, axis: _ShapeLike | None = None, *, keepdims: L[True]) -> np.intp: ...
 @overload
 def count_nonzero(
-    a: ArrayLike,
-    axis: None = ...,
-    *,
-    keepdims: L[False] = ...,
-) -> int: ...
+    a: NDArray[Any] | _NestedSequence[ArrayLike], axis: _ShapeLike | None = None, *, keepdims: L[True]
+) -> NDArray[np.intp]: ...
 @overload
-def count_nonzero(
-    a: ArrayLike,
-    axis: _ShapeLike = ...,
-    *,
-    keepdims: bool = ...,
-) -> Any: ...  # TODO: np.intp or ndarray[np.intp]
+def count_nonzero(a: ArrayLike, axis: _ShapeLike | None = None, *, keepdims: bool = False) -> Any: ...
 
+#
 def isfortran(a: NDArray[Any] | generic) -> bool: ...
 
 def argwhere(a: ArrayLike) -> NDArray[intp]: ...
@@ -448,8 +435,8 @@ def flatnonzero(a: ArrayLike) -> NDArray[intp]: ...
 
 @overload
 def correlate(
-    a: _ArrayLikeUnknown,
-    v: _ArrayLikeUnknown,
+    a: _ArrayLike[Never],
+    v: _ArrayLike[Never],
     mode: _CorrelateMode = ...,
 ) -> NDArray[Any]: ...
 @overload
@@ -497,8 +484,8 @@ def correlate(
 
 @overload
 def convolve(
-    a: _ArrayLikeUnknown,
-    v: _ArrayLikeUnknown,
+    a: _ArrayLike[Never],
+    v: _ArrayLike[Never],
     mode: _CorrelateMode = ...,
 ) -> NDArray[Any]: ...
 @overload
@@ -546,8 +533,8 @@ def convolve(
 
 @overload
 def outer(
-    a: _ArrayLikeUnknown,
-    b: _ArrayLikeUnknown,
+    a: _ArrayLike[Never],
+    b: _ArrayLike[Never],
     out: None = ...,
 ) -> NDArray[Any]: ...
 @overload
@@ -601,8 +588,8 @@ def outer(
 
 @overload
 def tensordot(
-    a: _ArrayLikeUnknown,
-    b: _ArrayLikeUnknown,
+    a: _ArrayLike[Never],
+    b: _ArrayLike[Never],
     axes: int | tuple[_ShapeLike, _ShapeLike] = ...,
 ) -> NDArray[Any]: ...
 @overload
@@ -675,8 +662,8 @@ def moveaxis(
 
 @overload
 def cross(
-    a: _ArrayLikeUnknown,
-    b: _ArrayLikeUnknown,
+    a: _ArrayLike[Never],
+    b: _ArrayLike[Never],
     axisa: int = ...,
     axisb: int = ...,
     axisc: int = ...,

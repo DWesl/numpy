@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from typing import (
     Any,
     Literal,
+    Never,
     Protocol,
     SupportsIndex,
     TypeAlias,
@@ -12,11 +13,10 @@ from typing import (
 )
 
 from _typeshed import Incomplete
-from typing_extensions import Never, deprecated
+from typing_extensions import deprecated
 
 import numpy as np
 from numpy import (
-    number,
     uint64,
     int_,
     int64,
@@ -47,11 +47,11 @@ from numpy._typing import (
     _ShapeLike,
     _ArrayLikeBool_co,
     _ArrayLikeUInt_co,
+    _ArrayLikeInt,
     _ArrayLikeInt_co,
     _ArrayLikeFloat_co,
     _ArrayLikeComplex_co,
     _ArrayLikeObject_co,
-    _ArrayLikeTD64_co,
     _IntLike_co,
     _BoolLike_co,
     _ComplexLike_co,
@@ -322,31 +322,42 @@ def matrix_transpose(x: _ArrayLike[_ScalarT], /) -> NDArray[_ScalarT]: ...
 @overload
 def matrix_transpose(x: ArrayLike, /) -> NDArray[Any]: ...
 
+#
 @overload
 def partition(
     a: _ArrayLike[_ScalarT],
-    kth: _ArrayLikeInt_co,
-    axis: SupportsIndex | None = ...,
-    kind: _PartitionKind = ...,
-    order: str | Sequence[str] | None = ...,
+    kth: _ArrayLikeInt,
+    axis: SupportsIndex | None = -1,
+    kind: _PartitionKind = "introselect",
+    order: None = None,
 ) -> NDArray[_ScalarT]: ...
 @overload
 def partition(
+    a: _ArrayLike[np.void],
+    kth: _ArrayLikeInt,
+    axis: SupportsIndex | None = -1,
+    kind: _PartitionKind = "introselect",
+    order: str | Sequence[str] | None = None,
+) -> NDArray[np.void]: ...
+@overload
+def partition(
     a: ArrayLike,
-    kth: _ArrayLikeInt_co,
-    axis: SupportsIndex | None = ...,
-    kind: _PartitionKind = ...,
-    order: str | Sequence[str] | None = ...,
+    kth: _ArrayLikeInt,
+    axis: SupportsIndex | None = -1,
+    kind: _PartitionKind = "introselect",
+    order: str | Sequence[str] | None = None,
 ) -> NDArray[Any]: ...
 
+#
 def argpartition(
     a: ArrayLike,
-    kth: _ArrayLikeInt_co,
+    kth: _ArrayLikeInt,
     axis: SupportsIndex | None = -1,
-    kind: _PartitionKind = ...,
-    order: str | Sequence[str] | None = ...,
+    kind: _PartitionKind = "introselect",
+    order: str | Sequence[str] | None = None,
 ) -> NDArray[intp]: ...
 
+#
 @overload
 def sort(
     a: _ArrayLike[_ScalarT],
