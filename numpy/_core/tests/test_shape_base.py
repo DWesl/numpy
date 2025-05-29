@@ -1,16 +1,34 @@
 import pytest
+
 import numpy as np
 from numpy._core import (
-    array, arange, atleast_1d, atleast_2d, atleast_3d, block, vstack, hstack,
-    newaxis, concatenate, stack
-    )
+    arange,
+    array,
+    atleast_1d,
+    atleast_2d,
+    atleast_3d,
+    block,
+    concatenate,
+    hstack,
+    newaxis,
+    stack,
+    vstack,
+)
+from numpy._core.shape_base import (
+    _block_concatenate,
+    _block_dispatcher,
+    _block_setup,
+    _block_slicing,
+)
 from numpy.exceptions import AxisError
-from numpy._core.shape_base import (_block_dispatcher, _block_setup,
-                                   _block_concatenate, _block_slicing)
 from numpy.testing import (
-    assert_, assert_raises, assert_array_equal, assert_equal,
-    assert_raises_regex, assert_warns, IS_PYPY
-    )
+    IS_PYPY,
+    assert_,
+    assert_array_equal,
+    assert_equal,
+    assert_raises,
+    assert_raises_regex,
+)
 
 
 class TestAtleast1d:
@@ -477,13 +495,13 @@ def test_stack():
     with pytest.raises(TypeError, match="arrays to stack must be"):
         stack(x for x in range(3))
 
-    #casting and dtype test
+    # casting and dtype test
     a = np.array([1, 2, 3])
     b = np.array([2.5, 3.5, 4.5])
     res = np.stack((a, b), axis=1, casting="unsafe", dtype=np.int64)
     expected_res = np.array([[1, 2], [2, 3], [3, 4]])
     assert_array_equal(res, expected_res)
-    #casting and dtype with TypeError
+    # casting and dtype with TypeError
     with assert_raises(TypeError):
         stack((a, b), dtype=np.int64, axis=1, casting="safe")
 

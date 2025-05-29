@@ -31,7 +31,8 @@ jobs:
           packages: >-
             python312=3.12.8-1 python312-devel=3.12.8-1 python312-pip python-pip-wheel
             python-setuptools-wheel liblapack-devel liblapack0 gcc-fortran
-            gcc-g++ git dash cmake ninja meson cygwin=3.6.0-0.412.g82b541a4759a
+            gcc-g++ git dash cmake ninja meson cygwin=3.6.2-1
+            openssl=3.0.16-2
       - name: Set Windows PATH
         uses: egor-tensin/cleanup-path@f04bc953e6823bf491cc0bdcff959c630db1b458 # v4.0.1
         with:

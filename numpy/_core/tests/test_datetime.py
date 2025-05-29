@@ -7,9 +7,14 @@ import numpy
 import numpy as np
 from numpy.testing import (
     IS_WASM,
-    assert_, assert_equal, assert_raises, assert_warns, suppress_warnings,
-    assert_raises_regex, assert_array_equal,
-    )
+    assert_,
+    assert_array_equal,
+    assert_equal,
+    assert_raises,
+    assert_raises_regex,
+    assert_warns,
+    suppress_warnings,
+)
 
 # Use pytz to test out various time zones if available
 try:
@@ -2492,7 +2497,7 @@ class TestDateTime:
         '''check isfinite, isinf, isnan for all units of <M, >M, <m, >m dtypes
         '''
         arr_val = [123, -321, "NaT"]
-        arr = np.array(arr_val,  dtype= dstr % unit)
+        arr = np.array(arr_val, dtype=(dstr % unit))
         pos = np.array([True, True, False])
         neg = np.array([False, False, True])
         false = np.array([False, False, False])
