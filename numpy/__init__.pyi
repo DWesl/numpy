@@ -121,10 +121,7 @@ from numpy._typing import (  # type: ignore[deprecated]
     _FloatingCodes,
     _ComplexFloatingCodes,
     _InexactCodes,
-    _NumberCodes,
     _CharacterCodes,
-    _FlexibleCodes,
-    _GenericCodes,
     # Ufuncs
     _UFunc_Nin1_Nout1,
     _UFunc_Nin2_Nout1,
@@ -313,6 +310,10 @@ from numpy._core.arrayprint import (
 from numpy._core.einsumfunc import (
     einsum,
     einsum_path,
+)
+from numpy._core.getlimits import (
+    finfo,
+    iinfo,
 )
 
 from numpy._core.multiarray import (
@@ -779,9 +780,7 @@ _ScalarT_co = TypeVar("_ScalarT_co", bound=generic, default=Any, covariant=True)
 _NumberT = TypeVar("_NumberT", bound=number)
 _InexactT = TypeVar("_InexactT", bound=inexact)
 _RealNumberT = TypeVar("_RealNumberT", bound=floating | integer)
-_FloatingT_co = TypeVar("_FloatingT_co", bound=floating, default=floating, covariant=True)
 _IntegerT = TypeVar("_IntegerT", bound=integer)
-_IntegerT_co = TypeVar("_IntegerT_co", bound=integer, default=integer, covariant=True)
 _NonObjectScalarT = TypeVar("_NonObjectScalarT", bound=np.bool | number | flexible | datetime64 | timedelta64)
 
 _NBit = TypeVar("_NBit", bound=NBitBase, default=Any)  # pyright: ignore[reportDeprecated]
@@ -944,7 +943,7 @@ _CastingKind: TypeAlias = L["no", "equiv", "safe", "same_kind", "same_value", "u
 
 _OrderKACF: TypeAlias = L["K", "A", "C", "F"] | None
 _OrderACF: TypeAlias = L["A", "C", "F"] | None
-_OrderCF: TypeAlias = L["C", "F"] | None
+_OrderCF: TypeAlias = L["C", "F"] | None  # noqa: PYI047
 
 _ModeKind: TypeAlias = L["raise", "wrap", "clip"]
 _PartitionKind: TypeAlias = L["introselect"]
@@ -1554,10 +1553,10 @@ class dtype(Generic[_ScalarT_co], metaclass=_DTypeMeta):
     @overload
     def __rmul__(self, value: SupportsIndex, /) -> dtype: ...
 
-    def __gt__(self, other: DTypeLike, /) -> builtins.bool: ...
-    def __ge__(self, other: DTypeLike, /) -> builtins.bool: ...
-    def __lt__(self, other: DTypeLike, /) -> builtins.bool: ...
-    def __le__(self, other: DTypeLike, /) -> builtins.bool: ...
+    def __gt__(self, other: DTypeLike | None, /) -> builtins.bool: ...
+    def __ge__(self, other: DTypeLike | None, /) -> builtins.bool: ...
+    def __lt__(self, other: DTypeLike | None, /) -> builtins.bool: ...
+    def __le__(self, other: DTypeLike | None, /) -> builtins.bool: ...
 
     # Explicitly defined `__eq__` and `__ne__` to get around mypy's
     # `strict_equality` option; even though their signatures are
@@ -2055,7 +2054,7 @@ class ndarray(_ArrayOrScalarCommon, Generic[_ShapeT_co, _DTypeT_co]):
     def __new__(
         cls,
         shape: _ShapeLike,
-        dtype: DTypeLike = ...,
+        dtype: DTypeLike | None = ...,
         buffer: _SupportsBuffer | None = ...,
         offset: SupportsIndex = ...,
         strides: _ShapeLike | None = ...,
@@ -2559,7 +2558,7 @@ class ndarray(_ArrayOrScalarCommon, Generic[_ShapeT_co, _DTypeT_co]):
     @overload
     def astype(
         self,
-        dtype: DTypeLike,
+        dtype: DTypeLike | None,
         order: _OrderKACF = ...,
         casting: _CastingKind = ...,
         subok: builtins.bool = ...,
@@ -3577,7 +3576,7 @@ class ndarray(_ArrayOrScalarCommon, Generic[_ShapeT_co, _DTypeT_co]):
 # See https://github.com/numpy/numpy-stubs/pull/80 for more details.
 class generic(_ArrayOrScalarCommon, Generic[_ItemT_co]):
     @abstractmethod
-    def __new__(self) -> None: ...
+    def __new__(cls) -> Self: ...
     def __hash__(self) -> int: ...
     @overload
     def __array__(self, dtype: None = None, /) -> ndarray[tuple[()], dtype[Self]]: ...
@@ -3619,7 +3618,7 @@ class generic(_ArrayOrScalarCommon, Generic[_ItemT_co]):
     @overload
     def astype(
         self,
-        dtype: DTypeLike,
+        dtype: DTypeLike | None,
         order: _OrderKACF = ...,
         casting: _CastingKind = ...,
         subok: builtins.bool = ...,
@@ -5035,11 +5034,11 @@ class float64(floating[_64Bit], float):  # type: ignore[misc]
     @overload
     def __rpow__(self, other: complex, mod: None = None, /) -> float64 | complex128: ...
 
-    def __mod__(self, other: _Float64_co, /) -> float64: ...  # type: ignore[override]
-    def __rmod__(self, other: _Float64_co, /) -> float64: ...  # type: ignore[override]
+    def __mod__(self, other: _Float64_co, /) -> float64: ...
+    def __rmod__(self, other: _Float64_co, /) -> float64: ...  # type: ignore[misc]
 
-    def __divmod__(self, other: _Float64_co, /) -> _2Tuple[float64]: ...  # type: ignore[override]
-    def __rdivmod__(self, other: _Float64_co, /) -> _2Tuple[float64]: ...  # type: ignore[override]
+    def __divmod__(self, other: _Float64_co, /) -> _2Tuple[float64]: ...
+    def __rdivmod__(self, other: _Float64_co, /) -> _2Tuple[float64]: ...  # type: ignore[misc]
 
 half: TypeAlias = float16
 single: TypeAlias = float32
@@ -5793,53 +5792,6 @@ class busdaycalendar:
     @property
     def holidays(self) -> NDArray[datetime64]: ...
 
-class finfo(Generic[_FloatingT_co]):
-    dtype: Final[dtype[_FloatingT_co]]
-    bits: Final[int]
-    eps: Final[_FloatingT_co]
-    epsneg: Final[_FloatingT_co]
-    iexp: Final[int]
-    machep: Final[int]
-    max: Final[_FloatingT_co]
-    maxexp: Final[int]
-    min: Final[_FloatingT_co]
-    minexp: Final[int]
-    negep: Final[int]
-    nexp: Final[int]
-    nmant: Final[int]
-    precision: Final[int]
-    resolution: Final[_FloatingT_co]
-    smallest_subnormal: Final[_FloatingT_co]
-    @property
-    def smallest_normal(self) -> _FloatingT_co: ...
-    @property
-    def tiny(self) -> _FloatingT_co: ...
-    @overload
-    def __new__(cls, dtype: inexact[_NBit1] | _DTypeLike[inexact[_NBit1]]) -> finfo[floating[_NBit1]]: ...
-    @overload
-    def __new__(cls, dtype: complex | type[complex]) -> finfo[float64]: ...
-    @overload
-    def __new__(cls, dtype: str) -> finfo[floating]: ...
-
-class iinfo(Generic[_IntegerT_co]):
-    dtype: Final[dtype[_IntegerT_co]]
-    kind: Final[LiteralString]
-    bits: Final[int]
-    key: Final[LiteralString]
-    @property
-    def min(self) -> int: ...
-    @property
-    def max(self) -> int: ...
-
-    @overload
-    def __new__(
-        cls, dtype: _IntegerT_co | _DTypeLike[_IntegerT_co]
-    ) -> iinfo[_IntegerT_co]: ...
-    @overload
-    def __new__(cls, dtype: int | type[int]) -> iinfo[int_]: ...
-    @overload
-    def __new__(cls, dtype: str) -> iinfo[Any]: ...
-
 @final
 class nditer:
     def __new__(
@@ -5847,7 +5799,7 @@ class nditer:
         op: ArrayLike | Sequence[ArrayLike | None],
         flags: Sequence[_NDIterFlagsKind] | None = ...,
         op_flags: Sequence[Sequence[_NDIterFlagsOp]] | None = ...,
-        op_dtypes: DTypeLike | Sequence[DTypeLike] = ...,
+        op_dtypes: DTypeLike | Sequence[DTypeLike | None] | None = ...,
         order: _OrderKACF = ...,
         casting: _CastingKind = ...,
         op_axes: Sequence[Sequence[SupportsIndex]] | None = ...,
@@ -6057,7 +6009,7 @@ class matrix(ndarray[_2DShapeT_co, _DTypeT_co]):
     def __new__(
         subtype,  # pyright: ignore[reportSelfClsParameterName]
         data: ArrayLike,
-        dtype: DTypeLike = ...,
+        dtype: DTypeLike | None = ...,
         copy: builtins.bool = ...,
     ) -> matrix[_2D, Incomplete]: ...
     def __array_finalize__(self, obj: object) -> None: ...
