@@ -16,18 +16,15 @@ from numpy import (
     complex128,
     complexfloating,
     float64,
-    # other
     floating,
     int32,
     object_,
     signedinteger,
     timedelta64,
     unsignedinteger,
-    # re-exports
     vecdot,
 )
 from numpy._core.fromnumeric import matrix_transpose
-from numpy._core.numeric import tensordot
 from numpy._globals import _NoValueType
 from numpy._typing import (
     ArrayLike,
@@ -38,9 +35,12 @@ from numpy._typing import (
     _ArrayLikeComplex_co,
     _ArrayLikeFloat_co,
     _ArrayLikeInt_co,
+    _ArrayLikeNumber_co,
     _ArrayLikeObject_co,
     _ArrayLikeTD64_co,
     _ArrayLikeUInt_co,
+    _NestedSequence,
+    _ShapeLike,
 )
 from numpy.linalg import LinAlgError
 
@@ -80,6 +80,7 @@ __all__ = [
 ]
 
 _NumberT = TypeVar("_NumberT", bound=np.number)
+_NumericScalarT = TypeVar("_NumericScalarT", bound=np.number | np.timedelta64 | np.object_)
 
 _ModeKind: TypeAlias = L["reduced", "complete", "r", "raw"]
 
@@ -301,9 +302,15 @@ def svd(
     hermitian: bool = False,
 ) -> NDArray[floating]: ...
 
-def svdvals(
-    x: _ArrayLikeInt_co | _ArrayLikeFloat_co | _ArrayLikeComplex_co
-) -> NDArray[floating]: ...
+# the ignored `overload-overlap` mypy error below is a false-positive
+@overload
+def svdvals(  # type: ignore[overload-overlap]
+    x: _ArrayLike[np.float64 | np.complex128 | np.integer | np.bool] | _NestedSequence[complex], /
+) -> NDArray[np.float64]: ...
+@overload
+def svdvals(x: _ArrayLike[np.float32 | np.complex64], /) -> NDArray[np.float32]: ...
+@overload
+def svdvals(x: _ArrayLikeNumber_co, /) -> NDArray[floating]: ...
 
 # TODO: Returns a scalar for 2D arrays and
 # a `(x.ndim - 2)`` dimensionl array otherwise
@@ -432,6 +439,48 @@ def vector_norm(
     keepdims: bool = False,
 ) -> Any: ...
 
+# keep in sync with numpy._core.numeric.tensordot (ignoring `/, *`)
+@overload
+def tensordot(
+    a: _ArrayLike[_NumericScalarT],
+    b: _ArrayLike[_NumericScalarT],
+    /,
+    *,
+    axes: int | tuple[_ShapeLike, _ShapeLike] = 2,
+) -> NDArray[_NumericScalarT]: ...
+@overload
+def tensordot(
+    a: _ArrayLikeBool_co,
+    b: _ArrayLikeBool_co,
+    /,
+    *,
+    axes: int | tuple[_ShapeLike, _ShapeLike] = 2,
+) -> NDArray[np.bool_]: ...
+@overload
+def tensordot(
+    a: _ArrayLikeInt_co,
+    b: _ArrayLikeInt_co,
+    /,
+    *,
+    axes: int | tuple[_ShapeLike, _ShapeLike] = 2,
+) -> NDArray[np.int_ | Any]: ...
+@overload
+def tensordot(
+    a: _ArrayLikeFloat_co,
+    b: _ArrayLikeFloat_co,
+    /,
+    *,
+    axes: int | tuple[_ShapeLike, _ShapeLike] = 2,
+) -> NDArray[np.float64 | Any]: ...
+@overload
+def tensordot(
+    a: _ArrayLikeComplex_co,
+    b: _ArrayLikeComplex_co,
+    /,
+    *,
+    axes: int | tuple[_ShapeLike, _ShapeLike] = 2,
+) -> NDArray[np.complex128 | Any]: ...
+
 # TODO: Returns a scalar or array
 def multi_dot(
     arrays: Iterable[_ArrayLikeComplex_co | _ArrayLikeObject_co | _ArrayLikeTD64_co],
@@ -460,7 +509,7 @@ def cross(
     x2: _ArrayLikeUInt_co,
     /,
     *,
-    axis: int = ...,
+    axis: int = -1,
 ) -> NDArray[unsignedinteger]: ...
 @overload
 def cross(
@@ -468,7 +517,7 @@ def cross(
     x2: _ArrayLikeInt_co,
     /,
     *,
-    axis: int = ...,
+    axis: int = -1,
 ) -> NDArray[signedinteger]: ...
 @overload
 def cross(
@@ -476,7 +525,7 @@ def cross(
     x2: _ArrayLikeFloat_co,
     /,
     *,
-    axis: int = ...,
+    axis: int = -1,
 ) -> NDArray[floating]: ...
 @overload
 def cross(
@@ -484,15 +533,15 @@ def cross(
     x2: _ArrayLikeComplex_co,
     /,
     *,
-    axis: int = ...,
+    axis: int = -1,
 ) -> NDArray[complexfloating]: ...
 
 @overload
 def matmul(x1: _ArrayLike[_NumberT], x2: _ArrayLike[_NumberT], /) -> NDArray[_NumberT]: ...
 @overload
-def matmul(x1: _ArrayLikeInt_co, x2: _ArrayLikeInt_co, /) -> NDArray[signedinteger]: ...
-@overload
 def matmul(x1: _ArrayLikeUInt_co, x2: _ArrayLikeUInt_co, /) -> NDArray[unsignedinteger]: ...
+@overload
+def matmul(x1: _ArrayLikeInt_co, x2: _ArrayLikeInt_co, /) -> NDArray[signedinteger]: ...
 @overload
 def matmul(x1: _ArrayLikeFloat_co, x2: _ArrayLikeFloat_co, /) -> NDArray[floating]: ...
 @overload

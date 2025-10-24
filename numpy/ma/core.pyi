@@ -1,11 +1,11 @@
 # pyright: reportIncompatibleMethodOverride=false
-# ruff: noqa: ANN001, ANN002, ANN003, ANN201, ANN202 ANN204, ANN401
 
 import datetime as dt
 from _typeshed import Incomplete
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from typing import (
     Any,
+    Final,
     Generic,
     Literal,
     Never,
@@ -18,7 +18,7 @@ from typing import (
     TypeAlias,
     overload,
 )
-from typing_extensions import TypeIs, TypeVar
+from typing_extensions import TypeIs, TypeVar, override
 
 import numpy as np
 from numpy import (
@@ -91,6 +91,7 @@ from numpy._typing import (
     _CharLike_co,
     _DTypeLike,
     _DTypeLikeBool,
+    _DTypeLikeVoid,
     _IntLike_co,
     _NestedSequence,
     _ScalarLike_co,
@@ -281,14 +282,19 @@ __all__ = [
 ]
 
 _ShapeT = TypeVar("_ShapeT", bound=_Shape)
+_ShapeOrAnyT = TypeVar("_ShapeOrAnyT", bound=_Shape, default=_AnyShape)
 _ShapeT_co = TypeVar("_ShapeT_co", bound=_Shape, default=_AnyShape, covariant=True)
 _DTypeT = TypeVar("_DTypeT", bound=dtype)
 _DTypeT_co = TypeVar("_DTypeT_co", bound=dtype, default=dtype, covariant=True)
 _ArrayT = TypeVar("_ArrayT", bound=ndarray[Any, Any])
+_MArrayT = TypeVar("_MArrayT", bound=MaskedArray[Any, Any])
 _ScalarT = TypeVar("_ScalarT", bound=generic)
 _ScalarT_co = TypeVar("_ScalarT_co", bound=generic, covariant=True)
 _NumberT = TypeVar("_NumberT", bound=number)
 _RealNumberT = TypeVar("_RealNumberT", bound=floating | integer)
+
+_Ignored: TypeAlias = object
+
 # A subset of `MaskedArray` that can be parametrized w.r.t. `np.generic`
 _MaskedArray: TypeAlias = MaskedArray[_AnyShape, dtype[_ScalarT]]
 
@@ -310,28 +316,18 @@ _ConvertibleToComplex: TypeAlias = SupportsComplex | SupportsFloat | SupportsInd
 _ConvertibleToTD64: TypeAlias = dt.timedelta | int | _CharLike_co | character | number | timedelta64 | np.bool | None
 _ConvertibleToDT64: TypeAlias = dt.date | int | _CharLike_co | character | number | datetime64 | np.bool | None
 
-MaskType = bool_
-nomask: bool_[Literal[False]]
+_NoMaskType: TypeAlias = np.bool_[Literal[False]]  # type of `np.False_`
+_MaskArray: TypeAlias = np.ndarray[_ShapeOrAnyT, np.dtype[np.bool_]]
+
+###
+
+MaskType = np.bool_
+
+nomask: Final[_NoMaskType] = ...
 
 class MaskedArrayFutureWarning(FutureWarning): ...
 class MAError(Exception): ...
 class MaskError(MAError): ...
-
-def default_fill_value(obj): ...
-def minimum_fill_value(obj): ...
-def maximum_fill_value(obj): ...
-def set_fill_value(a, fill_value): ...
-def common_fill_value(a, b): ...
-@overload
-def filled(a: ndarray[_ShapeT_co, _DTypeT_co], fill_value: _ScalarLike_co | None = None) -> ndarray[_ShapeT_co, _DTypeT_co]: ...
-@overload
-def filled(a: _ArrayLike[_ScalarT_co], fill_value: _ScalarLike_co | None = None) -> NDArray[_ScalarT_co]: ...
-@overload
-def filled(a: ArrayLike, fill_value: _ScalarLike_co | None = None) -> NDArray[Any]: ...
-def getdata(a, subok=True): ...
-get_data = getdata
-
-def fix_invalid(a, mask=..., copy=True, fill_value=None): ...
 
 class _MaskedUFunc:
     f: Any
@@ -360,6 +356,15 @@ class _DomainedBinaryOperation(_MaskedUFunc):
     filly: Any
     def __init__(self, dbfunc, domain, fillx=..., filly=...): ...
     def __call__(self, a, b, *args, **kwargs): ...
+
+class _MaskedPrintOption:
+    def __init__(self, display): ...
+    def display(self): ...
+    def set_display(self, s): ...
+    def enabled(self): ...
+    def enable(self, shrink=1): ...
+
+masked_print_option: Final[_MaskedPrintOption] = ...
 
 exp: _MaskedUnaryOperation
 conjugate: _MaskedUnaryOperation
@@ -416,63 +421,389 @@ remainder: _DomainedBinaryOperation
 fmod: _DomainedBinaryOperation
 mod: _DomainedBinaryOperation
 
-def make_mask_descr(ndtype): ...
+# `obj` can be anything (even `object()`), and is too "flexible", so we can't
+# meaningfully annotate it, or its return type.
+def default_fill_value(obj: object) -> Any: ...
+def minimum_fill_value(obj: object) -> Any: ...
+def maximum_fill_value(obj: object) -> Any: ...
 
+#
+@overload  # returns `a.fill_value` if `a` is a `MaskedArray`
+def get_fill_value(a: _MaskedArray[_ScalarT]) -> _ScalarT: ...
+@overload  # otherwise returns `default_fill_value(a)`
+def get_fill_value(a: object) -> Any: ...
+
+# this is a noop if `a` isn't a `MaskedArray`, so we only accept `MaskedArray` input
+def set_fill_value(a: MaskedArray, fill_value: _ScalarLike_co) -> None: ...
+
+# the return type depends on the *values* of `a` and `b` (which cannot be known
+# statically), which is why we need to return an awkward `_ | None`
 @overload
-def getmask(a: _ScalarLike_co) -> bool_: ...
+def common_fill_value(a: _MaskedArray[_ScalarT], b: MaskedArray) -> _ScalarT | None: ...
 @overload
-def getmask(a: MaskedArray[_ShapeT_co, Any]) -> np.ndarray[_ShapeT_co, dtype[bool_]] | bool_: ...
+def common_fill_value(a: object, b: object) -> Any: ...
+
+# keep in sync with `fix_invalid`, but return `ndarray` instead of `MaskedArray`
 @overload
-def getmask(a: ArrayLike) -> NDArray[bool_] | bool_: ...
+def filled(a: ndarray[_ShapeT, _DTypeT], fill_value: _ScalarLike_co | None = None) -> ndarray[_ShapeT, _DTypeT]: ...
+@overload
+def filled(a: _ArrayLike[_ScalarT], fill_value: _ScalarLike_co | None = None) -> NDArray[_ScalarT]: ...
+@overload
+def filled(a: ArrayLike, fill_value: _ScalarLike_co | None = None) -> NDArray[Incomplete]: ...
+
+# keep in sync with `filled`, but return `MaskedArray` instead of `ndarray`
+@overload
+def fix_invalid(
+    a: np.ndarray[_ShapeT, _DTypeT],
+    mask: _ArrayLikeBool_co = nomask,
+    copy: bool = True,
+    fill_value: _ScalarLike_co | None = None,
+) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload
+def fix_invalid(
+    a: _ArrayLike[_ScalarT],
+    mask: _ArrayLikeBool_co = nomask,
+    copy: bool = True,
+    fill_value: _ScalarLike_co | None = None,
+) -> _MaskedArray[_ScalarT]: ...
+@overload
+def fix_invalid(
+    a: ArrayLike,
+    mask: _ArrayLikeBool_co = nomask,
+    copy: bool = True,
+    fill_value: _ScalarLike_co | None = None,
+) -> _MaskedArray[Incomplete]: ...
+
+#
+@overload
+def getdata(a: np.ndarray[_ShapeT, _DTypeT], subok: bool = True) -> np.ndarray[_ShapeT, _DTypeT]: ...
+@overload
+def getdata(a: _ArrayLike[_ScalarT], subok: bool = True) -> NDArray[_ScalarT]: ...
+@overload
+def getdata(a: ArrayLike, subok: bool = True) -> NDArray[Incomplete]: ...
+
+get_data = getdata
+
+#
+@overload
+def getmask(a: _ScalarLike_co) -> _NoMaskType: ...
+@overload
+def getmask(a: MaskedArray[_ShapeT, Any]) -> _MaskArray[_ShapeT] | _NoMaskType: ...
+@overload
+def getmask(a: ArrayLike) -> _MaskArray | _NoMaskType: ...
 
 get_mask = getmask
 
-def getmaskarray(arr): ...
+# like `getmask`, but instead of `nomask` returns `make_mask_none(arr, arr.dtype?)`
+@overload
+def getmaskarray(arr: _ScalarLike_co) -> _MaskArray[tuple[()]]: ...
+@overload
+def getmaskarray(arr: np.ndarray[_ShapeT, Any]) -> _MaskArray[_ShapeT]: ...
 
 # It's sufficient for `m` to have dtype with type: `type[np.bool_]`,
 # which isn't necessarily a ndarray. Please open an issue if this causes issues.
 def is_mask(m: object) -> TypeIs[NDArray[bool_]]: ...
 
-def make_mask(m, copy=False, shrink=True, dtype=...): ...
-def make_mask_none(newshape, dtype=None): ...
-def mask_or(m1, m2, copy=False, shrink=True): ...
-def flatten_mask(mask): ...
-def masked_where(condition, a, copy=True): ...
-def masked_greater(x, value, copy=True): ...
-def masked_greater_equal(x, value, copy=True): ...
-def masked_less(x, value, copy=True): ...
-def masked_less_equal(x, value, copy=True): ...
-def masked_not_equal(x, value, copy=True): ...
-def masked_equal(x, value, copy=True): ...
-def masked_inside(x, v1, v2, copy=True): ...
-def masked_outside(x, v1, v2, copy=True): ...
-def masked_object(x, value, copy=True, shrink=True): ...
-def masked_values(x, value, rtol=1e-5, atol=1e-8, copy=True, shrink=True): ...
-def masked_invalid(a, copy=True): ...
+#
+@overload
+def make_mask_descr(ndtype: _VoidDTypeLike) -> np.dtype[np.void]: ...
+@overload
+def make_mask_descr(ndtype: _DTypeLike[np.generic] | str | type) -> np.dtype[np.bool_]: ...
 
-class _MaskedPrintOption:
-    def __init__(self, display): ...
-    def display(self): ...
-    def set_display(self, s): ...
-    def enabled(self): ...
-    def enable(self, shrink=1): ...
+#
+@overload  # m is nomask
+def make_mask(
+    m: _NoMaskType,
+    copy: bool = False,
+    shrink: bool = True,
+    dtype: _DTypeLikeBool = ...,
+) -> _NoMaskType: ...
+@overload  # m: ndarray, shrink=True (default), dtype: bool-like (default)
+def make_mask(
+    m: np.ndarray[_ShapeT],
+    copy: bool = False,
+    shrink: Literal[True] = True,
+    dtype: _DTypeLikeBool = ...,
+) -> _MaskArray[_ShapeT] | _NoMaskType: ...
+@overload  # m: ndarray, shrink=False (kwarg), dtype: bool-like (default)
+def make_mask(
+    m: np.ndarray[_ShapeT],
+    copy: bool = False,
+    *,
+    shrink: Literal[False],
+    dtype: _DTypeLikeBool = ...,
+) -> _MaskArray[_ShapeT]: ...
+@overload  # m: ndarray, dtype: void-like
+def make_mask(
+    m: np.ndarray[_ShapeT],
+    copy: bool = False,
+    shrink: bool = True,
+    *,
+    dtype: _DTypeLikeVoid,
+) -> np.ndarray[_ShapeT, np.dtype[np.void]]: ...
+@overload  # m: array-like, shrink=True (default), dtype: bool-like (default)
+def make_mask(
+    m: ArrayLike,
+    copy: bool = False,
+    shrink: Literal[True] = True,
+    dtype: _DTypeLikeBool = ...,
+) -> _MaskArray | _NoMaskType: ...
+@overload  # m: array-like, shrink=False (kwarg), dtype: bool-like (default)
+def make_mask(
+    m: ArrayLike,
+    copy: bool = False,
+    *,
+    shrink: Literal[False],
+    dtype: _DTypeLikeBool = ...,
+) -> _MaskArray: ...
+@overload  # m: array-like, dtype: void-like
+def make_mask(
+    m: ArrayLike,
+    copy: bool = False,
+    shrink: bool = True,
+    *,
+    dtype: _DTypeLikeVoid,
+) -> NDArray[np.void]: ...
+@overload  # fallback
+def make_mask(
+    m: ArrayLike,
+    copy: bool = False,
+    shrink: bool = True,
+    *,
+    dtype: DTypeLike = ...,
+) -> NDArray[Incomplete] | _NoMaskType: ...
 
-masked_print_option: _MaskedPrintOption
+#
+@overload  # known shape, dtype: unstructured (default)
+def make_mask_none(newshape: _ShapeT, dtype: np.dtype | type | str | None = None) -> _MaskArray[_ShapeT]: ...
+@overload  # known shape, dtype: structured
+def make_mask_none(newshape: _ShapeT, dtype: _VoidDTypeLike) -> np.ndarray[_ShapeT, dtype[np.void]]: ...
+@overload  # unknown shape, dtype: unstructured (default)
+def make_mask_none(newshape: _ShapeLike, dtype: np.dtype | type | str | None = None) -> _MaskArray: ...
+@overload  # unknown shape, dtype: structured
+def make_mask_none(newshape: _ShapeLike, dtype: _VoidDTypeLike) -> NDArray[np.void]: ...
 
-def flatten_structured_array(a): ...
+#
+@overload  # nomask, scalar-like, shrink=True (default)
+def mask_or(
+    m1: _NoMaskType | Literal[False],
+    m2: _ScalarLike_co,
+    copy: bool = False,
+    shrink: Literal[True] = True,
+) -> _NoMaskType: ...
+@overload  # nomask, scalar-like, shrink=False (kwarg)
+def mask_or(
+    m1: _NoMaskType | Literal[False],
+    m2: _ScalarLike_co,
+    copy: bool = False,
+    *,
+    shrink: Literal[False],
+) -> _MaskArray[tuple[()]]: ...
+@overload  # scalar-like, nomask, shrink=True (default)
+def mask_or(
+    m1: _ScalarLike_co,
+    m2: _NoMaskType | Literal[False],
+    copy: bool = False,
+    shrink: Literal[True] = True,
+) -> _NoMaskType: ...
+@overload  # scalar-like, nomask, shrink=False (kwarg)
+def mask_or(
+    m1: _ScalarLike_co,
+    m2: _NoMaskType | Literal[False],
+    copy: bool = False,
+    *,
+    shrink: Literal[False],
+) -> _MaskArray[tuple[()]]: ...
+@overload  # ndarray, ndarray | nomask, shrink=True (default)
+def mask_or(
+    m1: np.ndarray[_ShapeT, np.dtype[_ScalarT]],
+    m2: np.ndarray[_ShapeT, np.dtype[_ScalarT]] | _NoMaskType | Literal[False],
+    copy: bool = False,
+    shrink: Literal[True] = True,
+) -> _MaskArray[_ShapeT] | _NoMaskType: ...
+@overload  # ndarray, ndarray | nomask, shrink=False (kwarg)
+def mask_or(
+    m1: np.ndarray[_ShapeT, np.dtype[_ScalarT]],
+    m2: np.ndarray[_ShapeT, np.dtype[_ScalarT]] | _NoMaskType | Literal[False],
+    copy: bool = False,
+    *,
+    shrink: Literal[False],
+) -> _MaskArray[_ShapeT]: ...
+@overload  # ndarray | nomask, ndarray, shrink=True (default)
+def mask_or(
+    m1: np.ndarray[_ShapeT, np.dtype[_ScalarT]] | _NoMaskType | Literal[False],
+    m2: np.ndarray[_ShapeT, np.dtype[_ScalarT]],
+    copy: bool = False,
+    shrink: Literal[True] = True,
+) -> _MaskArray[_ShapeT] | _NoMaskType: ...
+@overload  # ndarray | nomask, ndarray, shrink=False (kwarg)
+def mask_or(
+    m1: np.ndarray[_ShapeT, np.dtype[_ScalarT]] | _NoMaskType | Literal[False],
+    m2: np.ndarray[_ShapeT, np.dtype[_ScalarT]],
+    copy: bool = False,
+    *,
+    shrink: Literal[False],
+) -> _MaskArray[_ShapeT]: ...
+
+#
+@overload
+def flatten_mask(mask: np.ndarray[_ShapeT]) -> _MaskArray[_ShapeT]: ...
+@overload
+def flatten_mask(mask: ArrayLike) -> _MaskArray: ...
+
+# NOTE: we currently don't know the field types of `void` dtypes, so it's not possible
+# to know the output dtype of the returned array.
+@overload
+def flatten_structured_array(a: MaskedArray[_ShapeT, np.dtype[np.void]]) -> MaskedArray[_ShapeT]: ...
+@overload
+def flatten_structured_array(a: np.ndarray[_ShapeT, np.dtype[np.void]]) -> np.ndarray[_ShapeT]: ...
+@overload  # for some reason this accepts unstructured array-likes, hence this fallback overload
+def flatten_structured_array(a: ArrayLike) -> np.ndarray: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_invalid(a: ndarray[_ShapeT, _DTypeT], copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_invalid(a: _ArrayLike[_ScalarT], copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_invalid(a: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # array-like of known scalar-type
+def masked_where(
+    condition: _ArrayLikeBool_co, a: ndarray[_ShapeT, _DTypeT], copy: bool = True
+) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_where(condition: _ArrayLikeBool_co, a: _ArrayLike[_ScalarT], copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_where(condition: _ArrayLikeBool_co, a: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_greater(x: ndarray[_ShapeT, _DTypeT], value: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_greater(x: _ArrayLike[_ScalarT], value: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_greater(x: ArrayLike, value: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_greater_equal(x: ndarray[_ShapeT, _DTypeT], value: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_greater_equal(x: _ArrayLike[_ScalarT], value: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_greater_equal(x: ArrayLike, value: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_less(x: ndarray[_ShapeT, _DTypeT], value: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_less(x: _ArrayLike[_ScalarT], value: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_less(x: ArrayLike, value: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_less_equal(x: ndarray[_ShapeT, _DTypeT], value: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_less_equal(x: _ArrayLike[_ScalarT], value: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_less_equal(x: ArrayLike, value: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_not_equal(x: ndarray[_ShapeT, _DTypeT], value: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_not_equal(x: _ArrayLike[_ScalarT], value: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_not_equal(x: ArrayLike, value: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_equal(x: ndarray[_ShapeT, _DTypeT], value: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_equal(x: _ArrayLike[_ScalarT], value: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_equal(x: ArrayLike, value: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_inside(x: ndarray[_ShapeT, _DTypeT], v1: ArrayLike, v2: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_inside(x: _ArrayLike[_ScalarT], v1: ArrayLike, v2: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_inside(x: ArrayLike, v1: ArrayLike, v2: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# keep in sync with other the `masked_*` functions
+@overload  # known array with known shape and dtype
+def masked_outside(x: ndarray[_ShapeT, _DTypeT], v1: ArrayLike, v2: ArrayLike, copy: bool = True) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload  # array-like of known scalar-type
+def masked_outside(x: _ArrayLike[_ScalarT], v1: ArrayLike, v2: ArrayLike, copy: bool = True) -> _MaskedArray[_ScalarT]: ...
+@overload  # unknown array-like
+def masked_outside(x: ArrayLike, v1: ArrayLike, v2: ArrayLike, copy: bool = True) -> _MaskedArray[Incomplete]: ...
+
+# only intended for object arrays, so we assume that's how it's always used in practice
+@overload
+def masked_object(
+    x: np.ndarray[_ShapeT, np.dtype[np.object_]],
+    value: object,
+    copy: bool = True,
+    shrink: bool = True,
+) -> MaskedArray[_ShapeT, np.dtype[np.object_]]: ...
+@overload
+def masked_object(
+    x: _ArrayLikeObject_co,
+    value: object,
+    copy: bool = True,
+    shrink: bool = True,
+) -> _MaskedArray[np.object_]: ...
+
+# keep roughly in sync with `filled`
+@overload
+def masked_values(
+    x: np.ndarray[_ShapeT, _DTypeT],
+    value: _ScalarLike_co,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+    copy: bool = True,
+    shrink: bool = True
+) -> MaskedArray[_ShapeT, _DTypeT]: ...
+@overload
+def masked_values(
+    x: _ArrayLike[_ScalarT],
+    value: _ScalarLike_co,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+    copy: bool = True,
+    shrink: bool = True
+) -> _MaskedArray[_ScalarT]: ...
+@overload
+def masked_values(
+    x: ArrayLike,
+    value: _ScalarLike_co,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+    copy: bool = True,
+    shrink: bool = True
+) -> _MaskedArray[Incomplete]: ...
+
+# TODO: Support non-boolean mask dtypes, such as `np.void`. This will require adding an
+# additional generic type parameter to (at least) `MaskedArray` and `MaskedIterator` to
+# hold the dtype of the mask.
 
 class MaskedIterator(Generic[_ShapeT_co, _DTypeT_co]):
-    ma: MaskedArray[_ShapeT_co, _DTypeT_co]
-    dataiter: Any
-    maskiter: Any
+    ma: MaskedArray[_ShapeT_co, _DTypeT_co]  # readonly
+    dataiter: np.flatiter[ndarray[_ShapeT_co, _DTypeT_co]]  # readonly
+    maskiter: Final[np.flatiter[NDArray[np.bool]]]
+
     def __init__(self, ma: MaskedArray[_ShapeT_co, _DTypeT_co]) -> None: ...
-    def __iter__(self) -> Iterator[Any]: ...
+    def __iter__(self) -> Self: ...
 
     # Similar to `MaskedArray.__getitem__` but without the `void` case.
     @overload
     def __getitem__(self, indx: _ArrayInt_co | tuple[_ArrayInt_co, ...], /) -> MaskedArray[_AnyShape, _DTypeT_co]: ...
     @overload
-    def __getitem__(self, indx: SupportsIndex | tuple[SupportsIndex, ...], /) -> Any: ...
+    def __getitem__(self, indx: SupportsIndex | tuple[SupportsIndex, ...], /) -> Incomplete: ...
     @overload
     def __getitem__(self, indx: _ToIndices, /) -> MaskedArray[_AnyShape, _DTypeT_co]: ...
 
@@ -522,7 +853,8 @@ class MaskedIterator(Generic[_ShapeT_co, _DTypeT_co]):
     @overload  # catch-all
     def __setitem__(self, index: _ToIndices, value: ArrayLike, /) -> None: ...
 
-    def __next__(self) -> Any: ...
+    # TODO: Returns `mvoid[(), _DTypeT_co]` for masks with `np.void` dtype.
+    def __next__(self: MaskedIterator[Any, np.dtype[_ScalarT]]) -> _ScalarT: ...
 
 class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     __array_priority__: Any
@@ -575,7 +907,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def __new__(
         cls,
-        data: object,
+        data: object = None,
         mask: _ArrayLikeBool_co = nomask,
         dtype: DTypeLike | None = None,
         copy: bool = False,
@@ -595,7 +927,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
         return_scalar: bool = False,
     ) -> MaskedArray[_ShapeT, _DTypeT]: ...
 
-    @overload  # ()
+    @overload  # type: ignore[override]  # ()
     def view(self, /, dtype: None = None, type: None = None, fill_value: _ScalarLike_co | None = None) -> Self: ...
     @overload  # (dtype: DTypeT)
     def view(
@@ -651,8 +983,9 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
 
     @property
     def shape(self) -> _ShapeT_co: ...
-    @shape.setter
+    @shape.setter  # type: ignore[override]
     def shape(self: MaskedArray[_ShapeT, Any], shape: _ShapeT, /) -> None: ...
+
     def __setmask__(self, mask: _ArrayLikeBool_co, copy: bool = False) -> None: ...
     @property
     def mask(self) -> np.ndarray[_ShapeT_co, dtype[MaskType]] | MaskType: ...
@@ -670,23 +1003,32 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @property
     def sharedmask(self) -> bool: ...
     def shrink_mask(self) -> Self: ...
+
     @property
-    def baseclass(self) -> type[NDArray[Any]]: ...
-    data: Any
+    def baseclass(self) -> type[ndarray]: ...
+
     @property
+    def _data(self) -> ndarray[_ShapeT_co, _DTypeT_co]: ...
+    @property
+    def data(self) -> ndarray[_ShapeT_co, _DTypeT_co]: ...  # type: ignore[override]
+
+    @property  # type: ignore[override]
     def flat(self) -> MaskedIterator[_ShapeT_co, _DTypeT_co]: ...
     @flat.setter
     def flat(self, value: ArrayLike, /) -> None: ...
+
     @property
     def fill_value(self: _MaskedArray[_ScalarT]) -> _ScalarT: ...
     @fill_value.setter
-    def fill_value(self, value: _ScalarLike_co | None = None) -> None: ...
-    get_fill_value: Any
-    set_fill_value: Any
+    def fill_value(self, value: _ScalarLike_co | None = None, /) -> None: ...
+
+    def get_fill_value(self: _MaskedArray[_ScalarT]) -> _ScalarT: ...
+    def set_fill_value(self, /, value: _ScalarLike_co | None = None) -> None: ...
+
     def filled(self, /, fill_value: _ScalarLike_co | None = None) -> ndarray[_ShapeT_co, _DTypeT_co]: ...
     def compressed(self) -> ndarray[tuple[int], _DTypeT_co]: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def compress(
         self,
         condition: _ArrayLikeBool_co,
@@ -727,7 +1069,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __lt__(self, other: ArrayLike, /) -> _MaskedArray[bool_]: ...  # type: ignore[override]
 
     # Keep in sync with `ndarray.__add__`
-    @overload
+    @overload  # type: ignore[override]
     def __add__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
     def __add__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
@@ -775,7 +1117,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __add__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__radd__`
-    @overload  # signature equivalent to __add__
+    @overload  # type: ignore[override]  # signature equivalent to __add__
     def __radd__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
     def __radd__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
@@ -823,7 +1165,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __radd__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__sub__`
-    @overload
+    @overload  # type: ignore[override]
     def __sub__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
     def __sub__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
@@ -861,7 +1203,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __sub__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__rsub__`
-    @overload
+    @overload  # type: ignore[override]
     def __rsub__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
     def __rsub__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
@@ -899,7 +1241,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __rsub__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__mul__`
-    @overload
+    @overload  # type: ignore[override]
     def __mul__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
     def __mul__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
@@ -941,7 +1283,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __mul__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__rmul__`
-    @overload  # signature equivalent to __mul__
+    @overload  # type: ignore[override]  # signature equivalent to __mul__
     def __rmul__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
     def __rmul__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
@@ -983,7 +1325,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __rmul__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__truediv__`
-    @overload
+    @overload  # type: ignore[override]
     def __truediv__(self: _MaskedArrayInt_co | _MaskedArray[float64], other: _ArrayLikeFloat64_co, /) -> _MaskedArray[float64]: ...
     @overload
     def __truediv__(self: _MaskedArrayFloat64_co, other: _ArrayLikeInt_co | _ArrayLike[floating[_64Bit]], /) -> _MaskedArray[float64]: ...
@@ -1015,7 +1357,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __truediv__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__rtruediv__`
-    @overload
+    @overload  # type: ignore[override]
     def __rtruediv__(self: _MaskedArrayInt_co | _MaskedArray[float64], other: _ArrayLikeFloat64_co, /) -> _MaskedArray[float64]: ...
     @overload
     def __rtruediv__(self: _MaskedArrayFloat64_co, other: _ArrayLikeInt_co | _ArrayLike[floating[_64Bit]], /) -> _MaskedArray[float64]: ...
@@ -1045,7 +1387,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __rtruediv__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__floordiv__`
-    @overload
+    @overload  # type: ignore[override]
     def __floordiv__(self: _MaskedArray[_RealNumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_RealNumberT]]: ...
     @overload
     def __floordiv__(self: _MaskedArray[_RealNumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_RealNumberT]: ...  # type: ignore[overload-overlap]
@@ -1075,7 +1417,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def __floordiv__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     # Keep in sync with `ndarray.__rfloordiv__`
-    @overload
+    @overload  # type: ignore[override]
     def __rfloordiv__(self: _MaskedArray[_RealNumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_RealNumberT]]: ...
     @overload
     def __rfloordiv__(self: _MaskedArray[_RealNumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_RealNumberT]: ...  # type: ignore[overload-overlap]
@@ -1102,198 +1444,76 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def __rfloordiv__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
-    # Keep in sync with `ndarray.__pow__`
+    # Keep in sync with `ndarray.__pow__` (minus the `mod` parameter)
+    @overload  # type: ignore[override]
+    def __pow__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
-    def __pow__(self: _MaskedArray[_NumberT], other: int | np.bool, mod: None = None, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
+    def __pow__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
     @overload
-    def __pow__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, mod: None = None, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
+    def __pow__(self: _MaskedArray[np.bool], other: _ArrayLikeBool_co, /) -> _MaskedArray[int8]: ...  # type: ignore[overload-overlap]
     @overload
-    def __pow__(self: _MaskedArray[np.bool], other: _ArrayLikeBool_co, mod: None = None, /) -> _MaskedArray[int8]: ...  # type: ignore[overload-overlap]
+    def __pow__(self: _MaskedArray[np.bool], other: _ArrayLike[_NumberT], /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
     @overload
-    def __pow__(self: _MaskedArray[np.bool], other: _ArrayLike[_NumberT], mod: None = None, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
+    def __pow__(self: _MaskedArray[float64], other: _ArrayLikeFloat64_co, /) -> _MaskedArray[float64]: ...
     @overload
-    def __pow__(self: _MaskedArray[float64], other: _ArrayLikeFloat64_co, mod: None = None, /) -> _MaskedArray[float64]: ...
+    def __pow__(self: _MaskedArrayFloat64_co, other: _ArrayLike[floating[_64Bit]], /) -> _MaskedArray[float64]: ...
     @overload
-    def __pow__(self: _MaskedArrayFloat64_co, other: _ArrayLike[floating[_64Bit]], mod: None = None, /) -> _MaskedArray[float64]: ...
+    def __pow__(self: _MaskedArray[complex128], other: _ArrayLikeComplex128_co, /) -> _MaskedArray[complex128]: ...
     @overload
-    def __pow__(self: _MaskedArray[complex128], other: _ArrayLikeComplex128_co, mod: None = None, /) -> _MaskedArray[complex128]: ...
+    def __pow__(self: _MaskedArrayComplex128_co, other: _ArrayLike[complexfloating[_64Bit]], /) -> _MaskedArray[complex128]: ...
     @overload
-    def __pow__(
-        self: _MaskedArrayComplex128_co, other: _ArrayLike[complexfloating[_64Bit]], mod: None = None, /
-    ) -> _MaskedArray[complex128]: ...
+    def __pow__(self: _MaskedArrayUInt_co, other: _ArrayLikeUInt_co, /) -> _MaskedArray[unsignedinteger]: ...  # type: ignore[overload-overlap]
     @overload
-    def __pow__(self: _MaskedArrayUInt_co, other: _ArrayLikeUInt_co, mod: None = None, /) -> _MaskedArray[unsignedinteger]: ...  # type: ignore[overload-overlap]
+    def __pow__(self: _MaskedArrayInt_co, other: _ArrayLikeInt_co, /) -> _MaskedArray[signedinteger]: ...  # type: ignore[overload-overlap]
     @overload
-    def __pow__(self: _MaskedArrayInt_co, other: _ArrayLikeInt_co, mod: None = None, /) -> _MaskedArray[signedinteger]: ...  # type: ignore[overload-overlap]
+    def __pow__(self: _MaskedArrayFloat_co, other: _ArrayLikeFloat_co, /) -> _MaskedArray[floating]: ...  # type: ignore[overload-overlap]
     @overload
-    def __pow__(self: _MaskedArrayFloat_co, other: _ArrayLikeFloat_co, mod: None = None, /) -> _MaskedArray[floating]: ...  # type: ignore[overload-overlap]
+    def __pow__(self: _MaskedArrayComplex_co, other: _ArrayLikeComplex_co, /) -> _MaskedArray[complexfloating]: ...
     @overload
-    def __pow__(self: _MaskedArrayComplex_co, other: _ArrayLikeComplex_co, mod: None = None, /) -> _MaskedArray[complexfloating]: ...
+    def __pow__(self: _MaskedArray[number], other: _ArrayLikeNumber_co, /) -> _MaskedArray[number]: ...
     @overload
-    def __pow__(self: _MaskedArray[number], other: _ArrayLikeNumber_co, mod: None = None, /) -> _MaskedArray[number]: ...
+    def __pow__(self: _MaskedArray[object_], other: Any, /) -> Any: ...
     @overload
-    def __pow__(self: _MaskedArray[object_], other: Any, mod: None = None, /) -> Any: ...
-    @overload
-    def __pow__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, mod: None = None, /) -> Any: ...
+    def __pow__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
-    # Keep in sync with `ndarray.__rpow__`
+    # Keep in sync with `ndarray.__rpow__` (minus the `mod` parameter)
+    @overload  # type: ignore[override]
+    def __rpow__(self: _MaskedArray[_NumberT], other: int | np.bool, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
     @overload
-    def __rpow__(self: _MaskedArray[_NumberT], other: int | np.bool, mod: None = None, /) -> MaskedArray[_ShapeT_co, dtype[_NumberT]]: ...
+    def __rpow__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
     @overload
-    def __rpow__(self: _MaskedArray[_NumberT], other: _ArrayLikeBool_co, mod: None = None, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
+    def __rpow__(self: _MaskedArray[np.bool], other: _ArrayLikeBool_co, /) -> _MaskedArray[int8]: ...  # type: ignore[overload-overlap]
     @overload
-    def __rpow__(self: _MaskedArray[np.bool], other: _ArrayLikeBool_co, mod: None = None, /) -> _MaskedArray[int8]: ...  # type: ignore[overload-overlap]
+    def __rpow__(self: _MaskedArray[np.bool], other: _ArrayLike[_NumberT], /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
     @overload
-    def __rpow__(self: _MaskedArray[np.bool], other: _ArrayLike[_NumberT], mod: None = None, /) -> _MaskedArray[_NumberT]: ...  # type: ignore[overload-overlap]
+    def __rpow__(self: _MaskedArray[float64], other: _ArrayLikeFloat64_co, /) -> _MaskedArray[float64]: ...
     @overload
-    def __rpow__(self: _MaskedArray[float64], other: _ArrayLikeFloat64_co, mod: None = None, /) -> _MaskedArray[float64]: ...
+    def __rpow__(self: _MaskedArrayFloat64_co, other: _ArrayLike[floating[_64Bit]], /) -> _MaskedArray[float64]: ...
     @overload
-    def __rpow__(self: _MaskedArrayFloat64_co, other: _ArrayLike[floating[_64Bit]], mod: None = None, /) -> _MaskedArray[float64]: ...
+    def __rpow__(self: _MaskedArray[complex128], other: _ArrayLikeComplex128_co, /) -> _MaskedArray[complex128]: ...
     @overload
-    def __rpow__(self: _MaskedArray[complex128], other: _ArrayLikeComplex128_co, mod: None = None, /) -> _MaskedArray[complex128]: ...
+    def __rpow__(self: _MaskedArrayComplex128_co, other: _ArrayLike[complexfloating[_64Bit]], /) -> _MaskedArray[complex128]: ...
     @overload
-    def __rpow__(
-        self: _MaskedArrayComplex128_co, other: _ArrayLike[complexfloating[_64Bit]], mod: None = None, /
-    ) -> _MaskedArray[complex128]: ...
+    def __rpow__(self: _MaskedArrayUInt_co, other: _ArrayLikeUInt_co, /) -> _MaskedArray[unsignedinteger]: ...  # type: ignore[overload-overlap]
     @overload
-    def __rpow__(self: _MaskedArrayUInt_co, other: _ArrayLikeUInt_co, mod: None = None, /) -> _MaskedArray[unsignedinteger]: ...  # type: ignore[overload-overlap]
+    def __rpow__(self: _MaskedArrayInt_co, other: _ArrayLikeInt_co, /) -> _MaskedArray[signedinteger]: ...  # type: ignore[overload-overlap]
     @overload
-    def __rpow__(self: _MaskedArrayInt_co, other: _ArrayLikeInt_co, mod: None = None, /) -> _MaskedArray[signedinteger]: ...  # type: ignore[overload-overlap]
+    def __rpow__(self: _MaskedArrayFloat_co, other: _ArrayLikeFloat_co, /) -> _MaskedArray[floating]: ...  # type: ignore[overload-overlap]
     @overload
-    def __rpow__(self: _MaskedArrayFloat_co, other: _ArrayLikeFloat_co, mod: None = None, /) -> _MaskedArray[floating]: ...  # type: ignore[overload-overlap]
+    def __rpow__(self: _MaskedArrayComplex_co, other: _ArrayLikeComplex_co, /) -> _MaskedArray[complexfloating]: ...
     @overload
-    def __rpow__(self: _MaskedArrayComplex_co, other: _ArrayLikeComplex_co, mod: None = None, /) -> _MaskedArray[complexfloating]: ...
+    def __rpow__(self: _MaskedArray[number], other: _ArrayLikeNumber_co, /) -> _MaskedArray[number]: ...
     @overload
-    def __rpow__(self: _MaskedArray[number], other: _ArrayLikeNumber_co, mod: None = None, /) -> _MaskedArray[number]: ...
+    def __rpow__(self: _MaskedArray[object_], other: Any, /) -> Any: ...
     @overload
-    def __rpow__(self: _MaskedArray[object_], other: Any, mod: None = None, /) -> Any: ...
-    @overload
-    def __rpow__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, mod: None = None, /) -> Any: ...
-
-    # Keep in sync with `ndarray.__iadd__`
-    @overload
-    def __iadd__(
-        self: _MaskedArray[np.bool], other: _ArrayLikeBool_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(self: _MaskedArray[integer], other: _ArrayLikeInt_co, /) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(
-        self: _MaskedArray[floating], other: _ArrayLikeFloat_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(
-        self: _MaskedArray[complexfloating], other: _ArrayLikeComplex_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(
-        self: _MaskedArray[timedelta64 | datetime64], other: _ArrayLikeTD64_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(self: _MaskedArray[bytes_], other: _ArrayLikeBytes_co, /) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(
-        self: MaskedArray[Any, dtype[str_] | dtypes.StringDType],
-        other: _ArrayLikeStr_co | _ArrayLikeString_co,
-        /,
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __iadd__(
-        self: _MaskedArray[object_], other: Any, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-
-    # Keep in sync with `ndarray.__isub__`
-    @overload
-    def __isub__(self: _MaskedArray[integer], other: _ArrayLikeInt_co, /) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __isub__(
-        self: _MaskedArray[floating], other: _ArrayLikeFloat_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __isub__(
-        self: _MaskedArray[complexfloating], other: _ArrayLikeComplex_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __isub__(
-        self: _MaskedArray[timedelta64 | datetime64], other: _ArrayLikeTD64_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __isub__(
-        self: _MaskedArray[object_], other: Any, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-
-    # Keep in sync with `ndarray.__imul__`
-    @overload
-    def __imul__(
-        self: _MaskedArray[np.bool], other: _ArrayLikeBool_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __imul__(
-        self: MaskedArray[Any, dtype[integer] | dtype[character] | dtypes.StringDType], other: _ArrayLikeInt_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __imul__(
-        self: _MaskedArray[floating | timedelta64], other: _ArrayLikeFloat_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __imul__(
-        self: _MaskedArray[complexfloating], other: _ArrayLikeComplex_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __imul__(
-        self: _MaskedArray[object_], other: Any, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-
-    # Keep in sync with `ndarray.__ifloordiv__`
-    @overload
-    def __ifloordiv__(self: _MaskedArray[integer], other: _ArrayLikeInt_co, /) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __ifloordiv__(
-        self: _MaskedArray[floating | timedelta64], other: _ArrayLikeFloat_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __ifloordiv__(
-        self: _MaskedArray[object_], other: Any, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-
-    # Keep in sync with `ndarray.__itruediv__`
-    @overload
-    def __itruediv__(
-        self: _MaskedArray[floating | timedelta64], other: _ArrayLikeFloat_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __itruediv__(
-        self: _MaskedArray[complexfloating],
-        other: _ArrayLikeComplex_co,
-        /,
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __itruediv__(
-        self: _MaskedArray[object_], other: Any, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-
-    # Keep in sync with `ndarray.__ipow__`
-    @overload
-    def __ipow__(self: _MaskedArray[integer], other: _ArrayLikeInt_co, /) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __ipow__(
-        self: _MaskedArray[floating], other: _ArrayLikeFloat_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __ipow__(
-        self: _MaskedArray[complexfloating], other: _ArrayLikeComplex_co, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
-    @overload
-    def __ipow__(
-        self: _MaskedArray[object_], other: Any, /
-    ) -> MaskedArray[_ShapeT_co, _DTypeT_co]: ...
+    def __rpow__(self: _MaskedArray[Any], other: _ArrayLikeObject_co, /) -> Any: ...
 
     #
     @property  # type: ignore[misc]
-    def imag(self: _HasDTypeWithRealAndImag[object, _ScalarT], /) -> MaskedArray[_ShapeT_co, dtype[_ScalarT]]: ...
+    def imag(self: _HasDTypeWithRealAndImag[object, _ScalarT], /) -> MaskedArray[_ShapeT_co, dtype[_ScalarT]]: ...  # type: ignore[override]
     get_imag: Any
     @property  # type: ignore[misc]
-    def real(self: _HasDTypeWithRealAndImag[_ScalarT, object], /) -> MaskedArray[_ShapeT_co, dtype[_ScalarT]]: ...
+    def real(self: _HasDTypeWithRealAndImag[_ScalarT, object], /) -> MaskedArray[_ShapeT_co, dtype[_ScalarT]]: ...  # type: ignore[override]
     get_real: Any
 
     # keep in sync with `np.ma.count`
@@ -1391,12 +1611,12 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
         copy: bool | None = None,
     ) -> MaskedArray[_AnyShape, _DTypeT_co]: ...
 
-    def resize(self, newshape: Never, refcheck: bool = True, order: bool = False) -> NoReturn: ...
+    def resize(self, newshape: Never, refcheck: bool = True, order: bool = False) -> NoReturn: ...  # type: ignore[override]
     def put(self, indices: _ArrayLikeInt_co, values: ArrayLike, mode: _ModeKind = "raise") -> None: ...
     def ids(self) -> tuple[int, int]: ...
     def iscontiguous(self) -> bool: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def all(
         self,
         axis: None = None,
@@ -1441,7 +1661,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
         keepdims: bool | _NoValueType = ...,
     ) -> _ArrayT: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def any(
         self,
         axis: None = None,
@@ -1524,7 +1744,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def dot(self, b: ArrayLike, out: _ArrayT, strict: bool = False) -> _ArrayT: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def sum(
         self,
         /,
@@ -1561,7 +1781,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def cumsum(self, /, axis: SupportsIndex | None = None, dtype: DTypeLike | None = None, *, out: _ArrayT) -> _ArrayT: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def prod(
         self,
         /,
@@ -1600,7 +1820,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def cumprod(self, /, axis: SupportsIndex | None = None, dtype: DTypeLike | None = None, *, out: _ArrayT) -> _ArrayT: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def mean(
         self,
         axis: _ShapeLike | None = None,
@@ -1635,7 +1855,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def anom(self, axis: SupportsIndex | None, dtype: DTypeLike) -> MaskedArray[_ShapeT_co, dtype]: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def var(
         self,
         axis: _ShapeLike | None = None,
@@ -1667,7 +1887,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
         mean: _ArrayLikeNumber_co | _NoValueType = ...,
     ) -> _ArrayT: ...
 
-    @overload
+    @overload  # type: ignore[override]
     def std(
         self,
         axis: _ShapeLike | None = None,
@@ -1707,7 +1927,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @overload
     def round(self, /, decimals: SupportsIndex = 0, *, out: _ArrayT) -> _ArrayT: ...
 
-    def argsort(
+    def argsort(  # type: ignore[override]
         self,
         axis: SupportsIndex | _NoValueType = ...,
         kind: _SortKind | None = None,
@@ -1952,7 +2172,7 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     ) -> _MaskedArray[intp]: ...
 
     # Keep in-sync with np.ma.take
-    @overload
+    @overload  # type: ignore[override]
     def take(  # type: ignore[overload-overlap]
         self: _MaskedArray[_ScalarT],
         indices: _IntLike_co,
@@ -2044,49 +2264,102 @@ class mvoid(MaskedArray[_ShapeT_co, _DTypeT_co]):
     def __iter__(self): ...
     def __len__(self): ...
     def filled(self, fill_value=None): ...
-    def tolist(self): ...
+    def tolist(self): ...  # type: ignore[override]
 
 def isMaskedArray(x): ...
 isarray = isMaskedArray
 isMA = isMaskedArray
 
 # 0D float64 array
-class MaskedConstant(MaskedArray[_AnyShape, dtype[float64]]):
-    def __new__(cls): ...
-    __class__: Any
-    def __array_finalize__(self, obj): ...
-    def __array_wrap__(self, obj, context=..., return_scalar=...): ...
-    def __format__(self, format_spec): ...
-    def __reduce__(self): ...
-    def __iop__(self, other): ...
-    __iadd__: Any
-    __isub__: Any
-    __imul__: Any
-    __ifloordiv__: Any
-    __itruediv__: Any
-    __ipow__: Any
-    def copy(self, *args, **kwargs): ...
-    def __copy__(self): ...
-    def __deepcopy__(self, memo): ...
-    def __setattr__(self, attr, value): ...
+class MaskedConstant(MaskedArray[tuple[()], dtype[float64]]):
+    def __new__(cls) -> Self: ...
 
-masked: MaskedConstant
-masked_singleton: MaskedConstant
-masked_array = MaskedArray
+    # these overrides are no-ops
+    @override
+    def __iadd__(self, other: _Ignored, /) -> Self: ...  # type: ignore[override]
+    @override
+    def __isub__(self, other: _Ignored, /) -> Self: ...  # type: ignore[override]
+    @override
+    def __imul__(self, other: _Ignored, /) -> Self: ...  # type: ignore[override]
+    @override
+    def __ifloordiv__(self, other: _Ignored, /) -> Self: ...
+    @override
+    def __itruediv__(self, other: _Ignored, /) -> Self: ...  # type: ignore[override]
+    @override
+    def __ipow__(self, other: _Ignored, /) -> Self: ...  # type: ignore[override]
+    @override
+    def __deepcopy__(self, /, memo: _Ignored) -> Self: ...  # type: ignore[override]
+    @override
+    def copy(self, /, *args: _Ignored, **kwargs: _Ignored) -> Self: ...
 
+masked: Final[MaskedConstant] = ...
+masked_singleton: Final[MaskedConstant] = ...
+
+masked_array: TypeAlias = MaskedArray
+
+# keep in sync with `MaskedArray.__new__`
+@overload
 def array(
-    data,
-    dtype=None,
-    copy=False,
-    order=None,
-    mask=...,
-    fill_value=None,
-    keep_mask=True,
-    hard_mask=False,
-    shrink=True,
-    subok=True,
-    ndmin=0,
-): ...
+    data: _ArrayLike[_ScalarT],
+    dtype: None = None,
+    copy: bool = False,
+    order: _OrderKACF | None = None,
+    mask: _ArrayLikeBool_co = nomask,
+    fill_value: _ScalarLike_co | None = None,
+    keep_mask: bool = True,
+    hard_mask: bool = False,
+    shrink: bool = True,
+    subok: bool = True,
+    ndmin: int = 0,
+) -> _MaskedArray[_ScalarT]: ...
+@overload
+def array(
+    data: object,
+    dtype: _DTypeLike[_ScalarT],
+    copy: bool = False,
+    order: _OrderKACF | None = None,
+    mask: _ArrayLikeBool_co = nomask,
+    fill_value: _ScalarLike_co | None = None,
+    keep_mask: bool = True,
+    hard_mask: bool = False,
+    shrink: bool = True,
+    subok: bool = True,
+    ndmin: int = 0,
+) -> _MaskedArray[_ScalarT]: ...
+@overload
+def array(
+    data: object,
+    dtype: DTypeLike | None = None,
+    copy: bool = False,
+    order: _OrderKACF | None = None,
+    mask: _ArrayLikeBool_co = nomask,
+    fill_value: _ScalarLike_co | None = None,
+    keep_mask: bool = True,
+    hard_mask: bool = False,
+    shrink: bool = True,
+    subok: bool = True,
+    ndmin: int = 0,
+) -> _MaskedArray[_ScalarT]: ...
+
+# keep in sync with `array`
+@overload
+def asarray(a: _ArrayLike[_ScalarT], dtype: None = None, order: _OrderKACF | None = None) -> _MaskedArray[_ScalarT]: ...
+@overload
+def asarray(a: object, dtype: _DTypeLike[_ScalarT], order: _OrderKACF | None = None) -> _MaskedArray[_ScalarT]: ...
+@overload
+def asarray(a: object, dtype: DTypeLike | None = None, order: _OrderKACF | None = None) -> _MaskedArray[_ScalarT]: ...
+
+# keep in sync with `asarray` (but note the additional first overload)
+@overload
+def asanyarray(a: _MArrayT, dtype: None = None) -> _MArrayT: ...
+@overload
+def asanyarray(a: _ArrayLike[_ScalarT], dtype: None = None) -> _MaskedArray[_ScalarT]: ...
+@overload
+def asanyarray(a: object, dtype: _DTypeLike[_ScalarT]) -> _MaskedArray[_ScalarT]: ...
+@overload
+def asanyarray(a: object, dtype: DTypeLike | None = None) -> _MaskedArray[_ScalarT]: ...
+
+#
 def is_masked(x: object) -> bool: ...
 
 class _extrema_operation(_MaskedUFunc):
@@ -2234,17 +2507,17 @@ trace: _frommethod
 var: _frommethod
 
 @overload
-def count(self: ArrayLike, axis: None = None, keepdims: Literal[False] | _NoValueType = ...) -> int: ...
+def count(a: ArrayLike, axis: None = None, keepdims: Literal[False] | _NoValueType = ...) -> int: ...
 @overload
-def count(self: ArrayLike, axis: _ShapeLike, keepdims: bool | _NoValueType = ...) -> NDArray[int_]: ...
+def count(a: ArrayLike, axis: _ShapeLike, keepdims: bool | _NoValueType = ...) -> NDArray[int_]: ...
 @overload
-def count(self: ArrayLike, axis: _ShapeLike | None = ..., *, keepdims: Literal[True]) -> NDArray[int_]: ...
+def count(a: ArrayLike, axis: _ShapeLike | None = None, *, keepdims: Literal[True]) -> NDArray[int_]: ...
 @overload
-def count(self: ArrayLike, axis: _ShapeLike | None, keepdims: Literal[True]) -> NDArray[int_]: ...
+def count(a: ArrayLike, axis: _ShapeLike | None, keepdims: Literal[True]) -> NDArray[int_]: ...
 
 @overload
 def argmin(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: None = None,
     fill_value: _ScalarLike_co | None = None,
     out: None = None,
@@ -2253,7 +2526,7 @@ def argmin(
 ) -> intp: ...
 @overload
 def argmin(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: SupportsIndex | None = None,
     fill_value: _ScalarLike_co | None = None,
     out: None = None,
@@ -2262,7 +2535,7 @@ def argmin(
 ) -> Any: ...
 @overload
 def argmin(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: SupportsIndex | None = None,
     fill_value: _ScalarLike_co | None = None,
     *,
@@ -2271,7 +2544,7 @@ def argmin(
 ) -> _ArrayT: ...
 @overload
 def argmin(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: SupportsIndex | None,
     fill_value: _ScalarLike_co | None,
     out: _ArrayT,
@@ -2282,7 +2555,7 @@ def argmin(
 #
 @overload
 def argmax(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: None = None,
     fill_value: _ScalarLike_co | None = None,
     out: None = None,
@@ -2291,7 +2564,7 @@ def argmax(
 ) -> intp: ...
 @overload
 def argmax(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: SupportsIndex | None = None,
     fill_value: _ScalarLike_co | None = None,
     out: None = None,
@@ -2300,7 +2573,7 @@ def argmax(
 ) -> Any: ...
 @overload
 def argmax(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: SupportsIndex | None = None,
     fill_value: _ScalarLike_co | None = None,
     *,
@@ -2309,7 +2582,7 @@ def argmax(
 ) -> _ArrayT: ...
 @overload
 def argmax(
-    self: ArrayLike,
+    a: ArrayLike,
     axis: SupportsIndex | None,
     fill_value: _ScalarLike_co | None,
     out: _ArrayT,
@@ -2381,7 +2654,7 @@ def sort(
     endwith: bool | None = True,
     fill_value: _ScalarLike_co | None = None,
     *,
-    stable: Literal[False] | None = False,
+    stable: Literal[False] | None = None,
 ) -> _ArrayT: ...
 @overload
 def sort(
@@ -2392,7 +2665,7 @@ def sort(
     endwith: bool | None = True,
     fill_value: _ScalarLike_co | None = None,
     *,
-    stable: Literal[False] | None = False,
+    stable: Literal[False] | None = None,
 ) -> NDArray[Any]: ...
 @overload
 def compressed(x: _ArrayLike[_ScalarT_co]) -> _Array1D[_ScalarT_co]: ...
@@ -2429,8 +2702,6 @@ def allequal(a: ArrayLike, b: ArrayLike, fill_value: bool = True) -> bool: ...
 
 def allclose(a: ArrayLike, b: ArrayLike, masked_equal: bool = True, rtol: float = 1e-5, atol: float = 1e-8) -> bool: ...
 
-def asarray(a, dtype=None, order=None): ...
-def asanyarray(a, dtype=None): ...
 def fromflex(fxarray): ...
 
 class _convert2ma:
@@ -2454,4 +2725,3 @@ zeros_like: _convert2ma
 
 def append(a, b, axis=None): ...
 def dot(a, b, strict=False, out=None): ...
-def mask_rowcols(a, axis=...): ...

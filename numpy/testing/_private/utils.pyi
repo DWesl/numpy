@@ -44,9 +44,13 @@ __all__ = [  # noqa: RUF022
     "IS_PYPY",
     "IS_PYSTON",
     "IS_WASM",
+    "IS_INSTALLED",
+    "IS_64BIT",
     "HAS_LAPACK64",
     "HAS_REFCOUNT",
+    "BLAS_SUPPORTS_FPE",
     "NOGIL_BUILD",
+    "NUMPY_ROOT",
     "assert_",
     "assert_array_almost_equal_nulp",
     "assert_raises_regex",
@@ -93,7 +97,6 @@ _Tss = ParamSpec("_Tss")
 _ET = TypeVar("_ET", bound=BaseException, default=BaseException)
 _FT = TypeVar("_FT", bound=Callable[..., Any])
 _W_co = TypeVar("_W_co", bound=_WarnLog | None, default=_WarnLog | None, covariant=True)
-_T_or_bool = TypeVar("_T_or_bool", default=bool)
 
 _StrLike: TypeAlias = str | bytes
 _RegexLike: TypeAlias = _StrLike | Pattern[Any]
@@ -130,8 +133,10 @@ IS_MUSL: Final[bool] = ...
 IS_PYPY: Final[bool] = ...
 IS_PYSTON: Final[bool] = ...
 IS_WASM: Final[bool] = ...
+IS_64BIT: Final[bool] = ...
 HAS_REFCOUNT: Final[bool] = ...
 HAS_LAPACK64: Final[bool] = ...
+BLAS_SUPPORTS_FPE: Final[bool] = ...
 NOGIL_BUILD: Final[bool] = ...
 
 class KnownFailureException(Exception): ...
@@ -162,14 +167,14 @@ class suppress_warnings:
 # Contrary to runtime we can't do `os.name` checks while type checking,
 # only `sys.platform` checks
 if sys.platform == "win32" or sys.platform == "cygwin":
-    def memusage(processName: str = ..., instance: int = ...) -> int: ...
+    def memusage(processName: str = "python", instance: int = 0) -> int: ...
 elif sys.platform == "linux":
-    def memusage(_proc_pid_stat: StrOrBytesPath = ...) -> int | None: ...
+    def memusage(_proc_pid_stat: StrOrBytesPath | None = None) -> int | None: ...
 else:
     def memusage() -> NoReturn: ...
 
 if sys.platform == "linux":
-    def jiffies(_proc_pid_stat: StrOrBytesPath = ..., _load_time: list[float] = []) -> int: ...
+    def jiffies(_proc_pid_stat: StrOrBytesPath | None = None, _load_time: list[float] | None = None) -> int: ...
 else:
     def jiffies(_load_time: list[float] = []) -> int: ...
 
@@ -179,7 +184,7 @@ def build_err_msg(
     err_msg: object,
     header: str = "Items are not equal:",
     verbose: bool = True,
-    names: Sequence[str] = ...,  # = ('ACTUAL', 'DESIRED')
+    names: Sequence[str] = ("ACTUAL", "DESIRED"),  # = ('ACTUAL', 'DESIRED')
     precision: SupportsIndex | None = 8,
 ) -> str: ...
 
@@ -454,7 +459,7 @@ def temppath(
 ) -> _GeneratorContextManager[AnyStr]: ...
 
 #
-def check_support_sve(__cache: list[_T_or_bool] = []) -> _T_or_bool: ...  # noqa: PYI063
+def check_support_sve(__cache: list[bool] = ..., /) -> bool: ...  # stubdefaulter: ignore[missing-default]
 
 #
 def decorate_methods(
