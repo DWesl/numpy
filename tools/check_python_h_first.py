@@ -34,6 +34,8 @@ PYTHON_INCLUDING_HEADERS = [
     "boost/python.hpp",
 ]
 LEAF_HEADERS = [
+    "numpyconfig.h",
+    "_numpyconfig.h",
     "numpy/numpyconfig.h",
     "numpy/npy_os.h",
     "numpy/npy_cpu.h",
