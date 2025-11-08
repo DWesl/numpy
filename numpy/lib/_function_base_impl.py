@@ -41,6 +41,7 @@ from numpy._core.umath import (
     arctan2,
     cos,
     exp,
+    floor,
     frompyfunc,
     less_equal,
     minimum,
@@ -706,7 +707,7 @@ def piecewise(x, condlist, funclist, *args, **kw):
         is the default value, used wherever all conditions are false.
     funclist : list of callables, f(x,*args,**kw), or scalars
         Each function is evaluated over `x` wherever its corresponding
-        condition is True.  It should take a 1d array as input and give an 1d
+        condition is True.  It should take a 1d array as input and give a 1d
         array or a scalar value as output.  If, instead of a callable,
         a scalar is provided then a constant function (``lambda x: scalar``) is
         assumed.
@@ -1785,6 +1786,7 @@ def unwrap(p, discont=None, axis=-1, *, period=2 * pi):
     Examples
     --------
     >>> import numpy as np
+
     >>> phase = np.linspace(0, np.pi, num=5)
     >>> phase[3:] += np.pi
     >>> phase
@@ -1802,6 +1804,23 @@ def unwrap(p, discont=None, axis=-1, *, period=2 * pi):
     array([-180., -140., -100.,  -60.,  -20.,   20.,   60.,  100.,  140.,
             180.,  220.,  260.,  300.,  340.,  380.,  420.,  460.,  500.,
             540.])
+
+    This example plots the unwrapping of the wrapped input signal `w`.
+    First generate `w`, then apply `unwrap` to get `u`.
+
+    >>> t = np.linspace(0, 25, 801)
+    >>> w = np.mod(1.5 * np.sin(1.1 * t + 0.26) * (1 - t / 6 + (t / 23) ** 3), 2.0) - 1
+    >>> u = np.unwrap(w, period=2.0)
+
+    Plot `w` and `u`.
+
+    >>> import matplotlib.pyplot as plt
+    >>> plt.plot(t, w, label='w (a signal wrapped to [-1, 1])')
+    >>> plt.plot(t, u, linewidth=2.5, alpha=0.5, label='unwrap(w, period=2)')
+    >>> plt.xlabel('t')
+    >>> plt.grid(alpha=0.6)
+    >>> plt.legend(framealpha=1, shadow=True)
+    >>> plt.show()
     """
     p = asarray(p)
     nd = p.ndim
@@ -4568,9 +4587,8 @@ def _lerp(a, b, t, out=None):
     out : array_like
         Output array.
     """
-    diff_b_a = subtract(b, a)
-    # asanyarray is a stop-gap until gh-13105
-    lerp_interpolation = asanyarray(add(a, diff_b_a * t, out=out))
+    diff_b_a = b - a
+    lerp_interpolation = add(a, diff_b_a * t, out=... if out is None else out)
     subtract(b, diff_b_a * (1 - t), out=lerp_interpolation, where=t >= 0.5,
              casting='unsafe', dtype=type(lerp_interpolation.dtype))
     if lerp_interpolation.ndim == 0 and out is None:
@@ -4662,8 +4680,8 @@ def _get_indexes(arr, virtual_indexes, valid_values_count):
     (previous_indexes, next_indexes): Tuple
         A Tuple of virtual_indexes neighbouring indexes
     """
-    previous_indexes = np.asanyarray(np.floor(virtual_indexes))
-    next_indexes = np.asanyarray(previous_indexes + 1)
+    previous_indexes = floor(virtual_indexes, out=...)
+    next_indexes = add(previous_indexes, 1, out=...)
     indexes_above_bounds = virtual_indexes >= valid_values_count - 1
     # When indexes is above max index, take the max value of the array
     if indexes_above_bounds.any():
