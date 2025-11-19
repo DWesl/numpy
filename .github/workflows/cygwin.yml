@@ -20,7 +20,7 @@ jobs:
   cygwin_build_test:
     runs-on: windows-latest
     # To enable this workflow on a fork, comment out:
-    if: github.repository == 'numpy/numpy'
+    # if: github.repository == 'numpy/numpy'
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -33,9 +33,10 @@ jobs:
           platform: x86_64
           install-dir: 'C:\tools\cygwin'
           packages: >-
-            python39=3.9.16-1 python39-devel=3.9.16-1 python39-pip python-pip-wheel
+            python312=3.12.9-1 python312-devel=3.12.9-1 python312-pip python-pip-wheel
             python-setuptools-wheel liblapack-devel liblapack0 gcc-fortran
-            gcc-g++ git dash cmake ninja
+            gcc-g++ git dash cmake ninja meson cygwin=3.6.5-1
+            openssl=3.0.18-1 libssl3=3.0.18-1 libssl-devel=3.0.18-1
       - name: Set Windows PATH
         uses: egor-tensin/cleanup-path@f04bc953e6823bf491cc0bdcff959c630db1b458 # v4.0.1
         with:
@@ -50,35 +51,44 @@ jobs:
       - name: Verify python version
         # Make sure it's the Cygwin one, not a Windows one
         run: |
-          dash -c "which python3.9; /usr/bin/python3.9 --version -V"
-      - name: Build NumPy wheel
+          dash -c "which python3.12; /usr/bin/python3.12 --version -V"
+      - name: Install python dependencies from PyPI
+        timeout-minutes: 60
+        shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -euxo pipefail {0}"
         run: |
-          dash -c "/usr/bin/python3.9 -m pip install build pytest hypothesis pytest-xdist Cython meson"
-          dash -c "/usr/bin/python3.9 -m build . --wheel -Csetup-args=-Dblas=blas -Csetup-args=-Dlapack=lapack -Csetup-args=-Dcpu-dispatch=none -Csetup-args=-Dcpu-baseline=native"
+          for pkg in build pytest hypothesis Cython meson-python pytest-xdist; do
+              date
+              /usr/bin/python3.12 -m pip install "${pkg}";
+          done
+      - name: Build NumPy wheel
+        timeout-minutes: 120
+        run: |
+          dash -c "/usr/bin/python3.12 -m build . --wheel -Csetup-args=-Dblas=blas -Csetup-args=-Dlapack=lapack -Csetup-args=-Dcpu-dispatch=none -Csetup-args=-Dcpu-baseline=native"
       - name: Install NumPy from wheel
         run: |
-          bash -c "/usr/bin/python3.9 -m pip install dist/numpy-*cp39*.whl"
+          bash -c "/usr/bin/python3.12 -m pip install dist/numpy-*cp312*.whl"
       - name: Rebase NumPy compiled extensions
         run: |
-          dash "tools/rebase_installed_dlls_cygwin.sh" 3.9
+          dash "tools/rebase_installed_dlls_cygwin.sh" 3.12
       - name: Run NumPy test suite
+        timeout-minutes: 180
         shell: "C:\\tools\\cygwin\\bin\\bash.exe -o igncr -eo pipefail {0}"
         run: |
           cd tools
-          /usr/bin/python3.9 -m pytest --pyargs numpy -n2 -m "not slow"
+          /usr/bin/python3.12 -m pytest --pyargs numpy -m "not slow" -vvv --verbose
       - name: Upload wheel if tests fail
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         if: failure()
         with:
           name: numpy-cygwin-wheel
-          path: dist/numpy-*cp39*.whl
+          path: dist/numpy-*cp312*.whl
       - name: Check the extension modules on failure
         if: failure()
         run: |
-          dash -c "/usr/bin/python3.9 -m pip show numpy"
-          dash -c "/usr/bin/python3.9 -m pip show -f numpy | grep .dll"
+          dash -c "/usr/bin/python3.12 -m pip show numpy"
+          dash -c "/usr/bin/python3.12 -m pip show -f numpy | grep .dll"
           dash -c "/bin/tr -d '\r' <tools/list_installed_dll_dependencies_cygwin.sh >list_dlls_unix.sh"
-          dash "list_dlls_unix.sh" 3.9
+          dash "list_dlls_unix.sh" 3.12
       - name: Print installed package versions on failure
         if: failure()
         run: |
