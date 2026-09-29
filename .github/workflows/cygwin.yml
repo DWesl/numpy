@@ -38,6 +38,7 @@ jobs:
             python-setuptools-wheel liblapack-devel liblapack0 gcc-fortran
             gcc-g++ git dash cmake ninja meson cygwin=3.6.5-1
             openssl=3.0.18-1 libssl3=3.0.18-1 libssl-devel=3.0.18-1
+            python312-setuptools_rust python312-maturin rustc rust
       - name: Set Windows PATH
         uses: egor-tensin/cleanup-path@3974efd722fa10f283df76342125776a352072dd # v5.0.2
         with:
