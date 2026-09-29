@@ -1,20 +1,19 @@
-from collections.abc import Container, Iterable
-from typing import Any, Protocol, TypeAlias, overload, type_check_only
-from typing import Literal as L
-
-from _typeshed import Incomplete
-from typing_extensions import TypeVar
+from collections.abc import Container, Iterable, Sequence
+from typing import Any, Literal as L, Protocol, overload, type_check_only
+from typing_extensions import deprecated
 
 import numpy as np
+from numpy._core.multiarray import _SupportsArray as _SupportsNDArray
 from numpy._typing import (
     ArrayLike,
     NDArray,
     _16Bit,
     _32Bit,
     _64Bit,
+    _AnyShape,
     _ArrayLike,
     _NestedSequence,
-    _ScalarLike_co,
+    _Shape,
     _SupportsArray,
 )
 
@@ -32,213 +31,440 @@ __all__ = [
     "typename",
 ]
 
-_T = TypeVar("_T")
-_T_co = TypeVar("_T_co", covariant=True)
-_ScalarT = TypeVar("_ScalarT", bound=np.generic)
-_ScalarT_co = TypeVar("_ScalarT_co", bound=np.generic, covariant=True)
-_RealT = TypeVar("_RealT", bound=np.floating | np.integer | np.bool)
+type _FloatMax32 = np.float32 | np.float16
+type _ComplexMax128 = np.complex128 | np.complex64
+type _RealMax64 = np.float64 | np.float32 | np.float16 | np.integer
+type _Real = np.floating | np.integer
+type _ToReal = _Real | np.bool
+type _InexactMax32 = np.inexact[_32Bit] | np.float16
+type _NumberMax64 = np.number[_64Bit] | np.number[_32Bit] | np.number[_16Bit] | np.integer
 
-_FloatMax32: TypeAlias = np.float32 | np.float16
-_ComplexMax128: TypeAlias = np.complex128 | np.complex64
-_RealMax64: TypeAlias = np.float64 | np.float32 | np.float16 | np.integer
-_Real: TypeAlias = np.floating | np.integer
-_InexactMax32: TypeAlias = np.inexact[_32Bit] | np.float16
-_NumberMax64: TypeAlias = np.number[_64Bit] | np.number[_32Bit] | np.number[_16Bit] | np.integer
-
-@type_check_only
-class _HasReal(Protocol[_T_co]):
-    @property
-    def real(self, /) -> _T_co: ...
+type _Array0D[ScalarT: np.generic] = np.ndarray[tuple[()], np.dtype[ScalarT]]
+type _Array1D[ScalarT: np.generic] = np.ndarray[tuple[int], np.dtype[ScalarT]]
+type _Array2D[ScalarT: np.generic] = np.ndarray[tuple[int, int], np.dtype[ScalarT]]
 
 @type_check_only
-class _HasImag(Protocol[_T_co]):
+class _HasReal[T](Protocol):
     @property
-    def imag(self, /) -> _T_co: ...
+    def real(self, /) -> T: ...
 
 @type_check_only
-class _HasDType(Protocol[_ScalarT_co]):
+class _HasImag[T](Protocol):
     @property
-    def dtype(self, /) -> np.dtype[_ScalarT_co]: ...
+    def imag(self, /) -> T: ...
+
+@type_check_only
+class _HasDType[ScalarT: np.generic](Protocol):
+    @property
+    def dtype(self, /) -> np.dtype[ScalarT]: ...
 
 ###
 
 def mintypecode(typechars: Iterable[str | ArrayLike], typeset: str | Container[str] = "GDFgdf", default: str = "d") -> str: ...
 
-#
-@overload
-def real(val: _HasReal[_T]) -> _T: ...  # type: ignore[overload-overlap]
-@overload
-def real(val: _ArrayLike[_RealT]) -> NDArray[_RealT]: ...
-@overload
+# keep in sync with `imag`
+@overload  # T.real
+def real[T](val: _HasReal[T]) -> T: ...
+@overload  # 1d bool
+def real(val: list[bool]) -> _Array1D[np.bool]: ...
+@overload  # 1d int
+def real(val: list[int]) -> _Array1D[np.int_]: ...
+@overload  # 1d float | complex
+def real(val: list[float] | list[complex]) -> _Array1D[np.float64]: ...
+@overload  # 2d bool
+def real(val: Sequence[list[bool]]) -> _Array2D[np.bool]: ...
+@overload  # 2d int
+def real(val: Sequence[list[int]]) -> _Array2D[np.int_]: ...
+@overload  # 2d float | complex
+def real(val: Sequence[list[float]] | Sequence[list[complex]]) -> _Array2D[np.float64]: ...
+@overload  # Nd T
+def real[RealT: _ToReal](val: _ArrayLike[RealT]) -> NDArray[RealT]: ...
+@overload  # fallback
 def real(val: ArrayLike) -> NDArray[Any]: ...
 
-#
-@overload
-def imag(val: _HasImag[_T]) -> _T: ...  # type: ignore[overload-overlap]
-@overload
-def imag(val: _ArrayLike[_RealT]) -> NDArray[_RealT]: ...
-@overload
+# keep in sync with `real`
+@overload  # T.imag
+def imag[T](val: _HasImag[T]) -> T: ...
+@overload  # 1d bool
+def imag(val: list[bool]) -> _Array1D[np.bool]: ...
+@overload  # 1d int
+def imag(val: list[int]) -> _Array1D[np.int_]: ...
+@overload  # 1d float | complex
+def imag(val: list[float] | list[complex]) -> _Array1D[np.float64]: ...
+@overload  # 2d bool
+def imag(val: Sequence[list[bool]]) -> _Array2D[np.bool]: ...
+@overload  # 2d int
+def imag(val: Sequence[list[int]]) -> _Array2D[np.int_]: ...
+@overload  # 2d float | complex
+def imag(val: Sequence[list[float]] | Sequence[list[complex]]) -> _Array2D[np.float64]: ...
+@overload  # Nd T
+def imag[RealT: _ToReal](val: _ArrayLike[RealT]) -> NDArray[RealT]: ...
+@overload  # fallback
 def imag(val: ArrayLike) -> NDArray[Any]: ...
 
-#
-@overload
-def iscomplex(x: _ScalarLike_co) -> np.bool: ...
-@overload
-def iscomplex(x: NDArray[Any] | _NestedSequence[ArrayLike]) -> NDArray[np.bool]: ...
-@overload
-def iscomplex(x: ArrayLike) -> np.bool | NDArray[np.bool]: ...
+# keep (roughly) in sync with `isreal`
+@overload  # 0d
+def iscomplex(x: complex | str | np.generic) -> np.bool: ...
+@overload  # Nd
+def iscomplex[ShapeT: _Shape](x: np.ndarray[ShapeT, np.dtype[Any]]) -> np.ndarray[ShapeT, np.dtype[np.bool]]: ...
+@overload  # 1d
+def iscomplex(x: Sequence[complex | np.generic]) -> _Array1D[np.bool]: ...
+@overload  # 2d
+def iscomplex(x: Sequence[Sequence[complex | np.generic]]) -> _Array2D[np.bool]: ...
+@overload  # Nd
+def iscomplex(x: _NestedSequence[ArrayLike]) -> NDArray[np.bool]: ...
+@overload  # ?d  (fallback)
+def iscomplex(x: ArrayLike) -> NDArray[np.bool] | Any: ...
 
-#
-@overload
-def isreal(x: _ScalarLike_co) -> np.bool: ...
-@overload
-def isreal(x: NDArray[Any] | _NestedSequence[ArrayLike]) -> NDArray[np.bool]: ...
-@overload
-def isreal(x: ArrayLike) -> np.bool | NDArray[np.bool]: ...
+# keep (roughly) in sync with `iscomplex`
+@overload  # 0d
+def isreal(x: np.generic | str) -> np.bool: ...
+@overload  # 0d +int
+def isreal(x: int) -> bool: ...
+@overload  # 0d +complex  (overlaps with float64 and complex128)
+def isreal(x: complex) -> bool | Any: ...
+@overload  # Nd
+def isreal[ShapeT: _Shape](x: np.ndarray[ShapeT, np.dtype[Any]]) -> np.ndarray[ShapeT, np.dtype[np.bool]]: ...
+@overload  # 1d
+def isreal(x: Sequence[complex | np.generic]) -> _Array1D[np.bool]: ...
+@overload  # 2d
+def isreal(x: Sequence[Sequence[complex | np.generic]]) -> _Array2D[np.bool]: ...
+@overload  # Nd
+def isreal(x: _NestedSequence[ArrayLike]) -> NDArray[np.bool]: ...
+@overload  # ?d  (fallback)
+def isreal(x: ArrayLike) -> NDArray[np.bool] | Any: ...
 
 #
 def iscomplexobj(x: _HasDType[Any] | ArrayLike) -> bool: ...
 def isrealobj(x: _HasDType[Any] | ArrayLike) -> bool: ...
 
 #
-@overload
-def nan_to_num(
-    x: _ScalarT,
+@overload  # 0d | Nd T  (`ndarray` subclasses pass through)
+def nan_to_num[ScalarOrArrayT: np.generic | np.ndarray[tuple[int, *tuple[int, ...]], Any]](
+    x: ScalarOrArrayT,
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> ScalarOrArrayT: ...
+@overload  # 0d T
+def nan_to_num[ScalarT: np.generic](
+    x: np.ndarray[tuple[()], np.dtype[ScalarT]],
     copy: bool = True,
     nan: float = 0.0,
     posinf: float | None = None,
     neginf: float | None = None,
-) -> _ScalarT: ...
-@overload
+) -> ScalarT: ...
+@overload  # Nd T
+def nan_to_num[ScalarT: np.generic](
+    x: _NestedSequence[_ArrayLike[ScalarT]],
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> NDArray[ScalarT]: ...
+@overload  # ?d T
+def nan_to_num[DTypeT: np.dtype](
+    x: _SupportsArray[DTypeT],
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> np.ndarray[_AnyShape, DTypeT] | Any: ...
+@overload  # 0d bool
 def nan_to_num(
-    x: NDArray[_ScalarT] | _NestedSequence[_ArrayLike[_ScalarT]],
+    x: bool,
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> np.bool: ...
+@overload  # 0d ~int  (overlaps with bool)
+def nan_to_num(
+    x: int,
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> np.int_ | Any: ...
+@overload  # 0d ~float  (overlaps with int)
+def nan_to_num(
+    x: float,
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> np.float64 | Any: ...
+@overload  # 0d ~complex  (overlaps with float)
+def nan_to_num(
+    x: complex,
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> np.complex128 | Any: ...
+@overload  # 1d bool
+def nan_to_num(
+    x: Sequence[bool],
     copy: bool = True,
     nan: float = 0.0,
     posinf: float | None = None,
     neginf: float | None = None,
-) -> NDArray[_ScalarT]: ...
-@overload
+) -> _Array1D[np.bool]: ...
+@overload  # 1d ~int
 def nan_to_num(
-    x: _SupportsArray[np.dtype[_ScalarT]],
+    x: list[int],
     copy: bool = True,
     nan: float = 0.0,
     posinf: float | None = None,
     neginf: float | None = None,
-) -> _ScalarT | NDArray[_ScalarT]: ...
-@overload
+) -> _Array1D[np.int_]: ...
+@overload  # 1d ~float
+def nan_to_num(
+    x: list[float],
+    copy: bool = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> _Array1D[np.float64]: ...
+@overload  # 1d ~complex
+def nan_to_num(
+    x: list[complex],
+    copy: bool = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> _Array1D[np.complex128]: ...
+@overload  # 2d bool
+def nan_to_num(
+    x: Sequence[Sequence[bool]],
+    copy: bool = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> _Array2D[np.bool]: ...
+@overload  # 2d ~int
+def nan_to_num(
+    x: Sequence[list[int]],
+    copy: bool = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> _Array2D[np.int_]: ...
+@overload  # 2d ~float
+def nan_to_num(
+    x: Sequence[list[float]],
+    copy: bool = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> _Array2D[np.float64]: ...
+@overload  # 2d ~complex
+def nan_to_num(
+    x: Sequence[list[complex]],
+    copy: bool = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> _Array2D[np.complex128]: ...
+@overload  # Nd bool
+def nan_to_num(
+    x: _NestedSequence[bool],
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> NDArray[np.bool]: ...
+@overload  # Nd ~int
+def nan_to_num(
+    x: _NestedSequence[list[int]] | list[int],
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> NDArray[np.int_]: ...
+@overload  # Nd ~float
+def nan_to_num(
+    x: _NestedSequence[list[float]] | list[float],
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> NDArray[np.float64]: ...
+@overload  # Nd ~complex
+def nan_to_num(
+    x: _NestedSequence[list[complex]] | list[complex],
+    copy: bool | None = True,
+    nan: float = 0.0,
+    posinf: float | None = None,
+    neginf: float | None = None,
+) -> NDArray[np.complex128]: ...
+@overload  # Nd  (fallback)
 def nan_to_num(
     x: _NestedSequence[ArrayLike],
-    copy: bool = True,
+    copy: bool | None = True,
     nan: float = 0.0,
     posinf: float | None = None,
     neginf: float | None = None,
-) -> NDArray[Incomplete]: ...
-@overload
+) -> NDArray[Any]: ...
+@overload  # ?d  (fallback)
 def nan_to_num(
     x: ArrayLike,
-    copy: bool = True,
+    copy: bool | None = True,
     nan: float = 0.0,
     posinf: float | None = None,
     neginf: float | None = None,
-) -> Incomplete: ...
+) -> NDArray[Any] | Any: ...
 
-# NOTE: The [overload-overlap] mypy error is a false positive
-@overload
-def real_if_close(a: _ArrayLike[np.complex64], tol: float = 100) -> NDArray[np.float32 | np.complex64]: ...  # type: ignore[overload-overlap]
-@overload
-def real_if_close(a: _ArrayLike[np.complex128], tol: float = 100) -> NDArray[np.float64 | np.complex128]: ...
-@overload
-def real_if_close(a: _ArrayLike[np.clongdouble], tol: float = 100) -> NDArray[np.longdouble | np.clongdouble]: ...
-@overload
-def real_if_close(a: _ArrayLike[_RealT], tol: float = 100) -> NDArray[_RealT]: ...
-@overload
+#
+@overload  # Nd T
+def real_if_close[ShapeT: _Shape, DTypeT: np.dtype[_ToReal]](
+    a: _SupportsNDArray[np.ndarray[ShapeT, DTypeT]],
+    tol: float = 100,
+) -> np.ndarray[ShapeT, DTypeT]: ...
+@overload  # Nd c64
+def real_if_close[ShapeT: _Shape](
+    a: _SupportsNDArray[np.ndarray[ShapeT, np.dtype[np.complex64]]],
+    tol: float = 100,
+) -> np.ndarray[ShapeT, np.dtype[np.float32 | np.complex64]]: ...
+@overload  # Nd c128
+def real_if_close[ShapeT: _Shape](
+    a: _SupportsNDArray[np.ndarray[ShapeT, np.dtype[np.complex128]]],
+    tol: float = 100,
+) -> np.ndarray[ShapeT, np.dtype[np.float64 | np.complex128]]: ...
+@overload  # Nd c160
+def real_if_close[ShapeT: _Shape](
+    a: _SupportsNDArray[np.ndarray[ShapeT, np.dtype[np.clongdouble]]],
+    tol: float = 100,
+) -> np.ndarray[ShapeT, np.dtype[np.longdouble | np.clongdouble]]: ...
+@overload  # 1d T
+def real_if_close[RealT: _ToReal](
+    a: Sequence[RealT | _Array0D[RealT]],
+    tol: float = 100,
+) -> _Array1D[RealT]: ...
+@overload  # 1d bool
+def real_if_close(a: list[bool], tol: float = 100) -> _Array1D[np.bool]: ...
+@overload  # 1d ~int
+def real_if_close(a: list[int], tol: float = 100) -> _Array1D[np.int_]: ...
+@overload  # 1d ~float
+def real_if_close(a: list[float], tol: float = 100) -> _Array1D[np.float64]: ...
+@overload  # 1d c128 | ~complex
+def real_if_close(
+    a: Sequence[np.complex128 | _Array0D[np.complex128]] | list[complex],
+    tol: float = 100,
+) -> _Array1D[np.float64 | np.complex128]: ...
+@overload  # 2d  (fallback)
+def real_if_close(a: Sequence[Sequence[complex | np.generic]], tol: float = 100) -> _Array2D[Any]: ...
+@overload  # ?d  (fallback)
 def real_if_close(a: ArrayLike, tol: float = 100) -> NDArray[Any]: ...
 
 #
 @overload
-def typename(char: L['S1']) -> L['character']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["S1"]) -> L["character"]: ...
 @overload
-def typename(char: L['?']) -> L['bool']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["?"]) -> L["bool"]: ...
 @overload
-def typename(char: L['b']) -> L['signed char']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["b"]) -> L["signed char"]: ...
 @overload
-def typename(char: L['B']) -> L['unsigned char']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["B"]) -> L["unsigned char"]: ...
 @overload
-def typename(char: L['h']) -> L['short']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["h"]) -> L["short"]: ...
 @overload
-def typename(char: L['H']) -> L['unsigned short']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["H"]) -> L["unsigned short"]: ...
 @overload
-def typename(char: L['i']) -> L['integer']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["i"]) -> L["integer"]: ...
 @overload
-def typename(char: L['I']) -> L['unsigned integer']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["I"]) -> L["unsigned integer"]: ...
 @overload
-def typename(char: L['l']) -> L['long integer']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["l"]) -> L["long integer"]: ...
 @overload
-def typename(char: L['L']) -> L['unsigned long integer']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["L"]) -> L["unsigned long integer"]: ...
 @overload
-def typename(char: L['q']) -> L['long long integer']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["q"]) -> L["long long integer"]: ...
 @overload
-def typename(char: L['Q']) -> L['unsigned long long integer']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["Q"]) -> L["unsigned long long integer"]: ...
 @overload
-def typename(char: L['f']) -> L['single precision']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["f"]) -> L["single precision"]: ...
 @overload
-def typename(char: L['d']) -> L['double precision']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["d"]) -> L["double precision"]: ...
 @overload
-def typename(char: L['g']) -> L['long precision']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["g"]) -> L["long precision"]: ...
 @overload
-def typename(char: L['F']) -> L['complex single precision']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["F"]) -> L["complex single precision"]: ...
 @overload
-def typename(char: L['D']) -> L['complex double precision']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["D"]) -> L["complex double precision"]: ...
 @overload
-def typename(char: L['G']) -> L['complex long double precision']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["G"]) -> L["complex long double precision"]: ...
 @overload
-def typename(char: L['S']) -> L['string']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["S"]) -> L["string"]: ...
 @overload
-def typename(char: L['U']) -> L['unicode']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["U"]) -> L["unicode"]: ...
 @overload
-def typename(char: L['V']) -> L['void']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["V"]) -> L["void"]: ...
 @overload
-def typename(char: L['O']) -> L['object']: ...
+@deprecated("numpy.typename is deprecated. Use numpy.dtype.name instead.")
+def typename(char: L["O"]) -> L["object"]: ...
 
 # NOTE: The [overload-overlap] mypy errors are false positives
 @overload
 def common_type() -> type[np.float16]: ...
 @overload
-def common_type(a0: _HasDType[np.float16], /, *ai: _HasDType[np.float16]) -> type[np.float16]: ...  # type: ignore[overload-overlap]
+def common_type(a0: _HasDType[np.float16], /, *ai: _HasDType[np.float16]) -> type[np.float16]: ...
 @overload
-def common_type(a0: _HasDType[np.float32], /, *ai: _HasDType[_FloatMax32]) -> type[np.float32]: ...  # type: ignore[overload-overlap]
+def common_type(a0: _HasDType[np.float32], /, *ai: _HasDType[_FloatMax32]) -> type[np.float32]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[np.float64 | np.integer],
     /,
     *ai: _HasDType[_RealMax64],
 ) -> type[np.float64]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[np.longdouble],
     /,
     *ai: _HasDType[_Real],
 ) -> type[np.longdouble]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[np.complex64],
     /,
     *ai: _HasDType[_InexactMax32],
 ) -> type[np.complex64]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[np.complex128],
     /,
     *ai: _HasDType[_NumberMax64],
 ) -> type[np.complex128]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[np.clongdouble],
     /,
     *ai: _HasDType[np.number],
 ) -> type[np.clongdouble]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[_FloatMax32],
     array1: _HasDType[np.float32],
     /,
@@ -259,7 +485,7 @@ def common_type(
     *ai: _HasDType[_Real],
 ) -> type[np.longdouble]: ...
 @overload
-def common_type(  # type: ignore[overload-overlap]
+def common_type(
     a0: _HasDType[_InexactMax32],
     array1: _HasDType[np.complex64],
     /,

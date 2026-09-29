@@ -12,7 +12,7 @@ NPY_NO_EXPORT PyObject *
 _get_madvise_hugepage(PyObject *NPY_UNUSED(self), PyObject *NPY_UNUSED(args));
 
 NPY_NO_EXPORT PyObject *
-_set_madvise_hugepage(PyObject *NPY_UNUSED(self), PyObject *enabled_obj);
+_set_madvise_hugepage(PyObject *self, PyObject *enabled_obj);
 
 NPY_NO_EXPORT void *
 PyDataMem_UserNEW(npy_uintp sz, PyObject *mem_handler);
@@ -45,7 +45,6 @@ npy_free_cache_dim_array(PyArrayObject * arr)
 }
 
 extern PyDataMem_Handler default_handler;
-extern PyObject *current_handler; /* PyContextVar/PyCapsule */
 
 NPY_NO_EXPORT PyObject *
 get_handler_name(PyObject *NPY_UNUSED(self), PyObject *obj);
@@ -75,7 +74,7 @@ _npy_init_workspace(
 
 /*
  * Helper definition macro for a small work/scratchspace.
- * The `NAME` is the C array to to be defined of with the type `TYPE`.
+ * The `NAME` is the C array to be defined of with the type `TYPE`.
  *
  * The usage pattern for this is:
  *
@@ -93,10 +92,15 @@ _npy_init_workspace(
  * With some caches, it may be possible to malloc/calloc very quickly in which
  * case we should not hesitate to replace this pattern.
  */
-#define NPY_ALLOC_WORKSPACE(NAME, TYPE, fixed_size, size)  \
+#define NPY_DEFINE_WORKSPACE(NAME, TYPE, fixed_size)        \
     TYPE NAME##_static[fixed_size];                        \
-    TYPE *NAME;                                            \
+    TYPE *NAME;
+#define NPY_INIT_WORKSPACE(NAME, TYPE, fixed_size, size)   \
     _npy_init_workspace((void **)&NAME, NAME##_static, (fixed_size), sizeof(TYPE), (size))
+
+#define NPY_ALLOC_WORKSPACE(NAME, TYPE, fixed_size, size)  \
+    NPY_DEFINE_WORKSPACE(NAME, TYPE, fixed_size)            \
+    NPY_INIT_WORKSPACE(NAME, TYPE, fixed_size, size)
 
 
 static inline void

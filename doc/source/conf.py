@@ -2,6 +2,7 @@ import importlib
 import os
 import re
 import sys
+import sysconfig
 from datetime import datetime
 
 from docutils import nodes
@@ -17,6 +18,9 @@ needs_sphinx = '4.3'
 # must be kept alive to hold the patched names
 _name_cache = {}
 
+FREE_THREADED_BUILD = sysconfig.get_config_var('Py_GIL_DISABLED')
+
+
 def replace_scalar_type_names():
     """ Rename numpy types to use the canonical names to make sphinx behave """
     import ctypes
@@ -30,10 +34,19 @@ def replace_scalar_type_names():
     class PyTypeObject(ctypes.Structure):
         pass
 
-    PyObject._fields_ = [
-        ('ob_refcnt', Py_ssize_t),
-        ('ob_type', ctypes.POINTER(PyTypeObject)),
-    ]
+    if not FREE_THREADED_BUILD:
+        PyObject._fields_ = [
+            ('ob_refcnt', Py_ssize_t),
+            ('ob_type', ctypes.POINTER(PyTypeObject)),
+        ]
+    else:
+        # As of Python 3.14
+        PyObject._fields_ = [
+            ('ob_refcnt_full', ctypes.c_int64),
+            # an anonymous struct that we don't try to model
+            ('__private', ctypes.c_int64),
+            ('ob_type', ctypes.POINTER(PyTypeObject)),
+        ]
 
     PyTypeObject._fields_ = [
         # varhead
@@ -57,7 +70,7 @@ def replace_scalar_type_names():
         if sys.implementation.name == 'cpython':
             c_typ.tp_name = _name_cache[typ] = b"numpy." + name.encode('utf8')
         else:
-            # It is not guarenteed that the c_typ has this model on other
+            # It is not guaranteed that the c_typ has this model on other
             # implementations
             _name_cache[typ] = b"numpy." + name.encode('utf8')
 
@@ -114,7 +127,7 @@ for ext, warn in skippable_extensions:
 templates_path = ['_templates']
 
 # The suffix of source filenames.
-source_suffix = '.rst'
+source_suffix = {'.rst': 'restructuredtext'}
 
 # General substitutions.
 project = 'NumPy'
@@ -144,14 +157,6 @@ today_fmt = '%B %d, %Y'
 
 # The reST default role (used for this markup: `text`) to use for all documents.
 default_role = "autolink"
-
-# List of directories, relative to source directories, that shouldn't be searched
-# for source files.
-exclude_dirs = []
-
-exclude_patterns = []
-if sys.version_info[:2] >= (3, 12):
-    exclude_patterns += ["reference/distutils.rst"]
 
 # If true, '()' will be appended to :func: etc. cross-reference text.
 add_function_parentheses = False
@@ -272,6 +277,10 @@ html_theme_options = {
         "json_url": "https://numpy.org/doc/_static/versions.json",
     },
     "show_version_warning_banner": True,
+    "analytics": {
+        "plausible_analytics_domain": "numpy.org/doc/stable/",
+        "plausible_analytics_url": ("https://views.scientific-python.org/js/script.js"),
+    },
 }
 
 html_title = f"{project} v{version} Manual"
@@ -410,11 +419,12 @@ texinfo_documents = [
 intersphinx_mapping = {
     'neps': ('https://numpy.org/neps', None),
     'python': ('https://docs.python.org/3', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy', None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/",
+              "https://static.scipy.org/doc/scipy/objects.inv"),
     'matplotlib': ('https://matplotlib.org/stable', None),
     'imageio': ('https://imageio.readthedocs.io/en/stable', None),
     'skimage': ('https://scikit-image.org/docs/stable', None),
-    'pandas': ('https://pandas.pydata.org/pandas-docs/stable', None),
+    'pandas': ('https://pandas.pydata.org/docs', None),
     'scipy-lecture-notes': ('https://scipy-lectures.org', None),
     'pytest': ('https://docs.pytest.org/en/stable', None),
     'numpy-tutorials': ('https://numpy.org/numpy-tutorials', None),
@@ -574,7 +584,7 @@ def linkcode_resolve(domain, info):
         fn = relpath(fn, start=dirname(numpy.__file__))
 
     if lineno:
-        linespec = "#L%d-L%d" % (lineno, lineno + len(source) - 1)
+        linespec = f"#L{lineno}-L{lineno + len(source) - 1}"
     else:
         linespec = ""
 
@@ -584,8 +594,8 @@ def linkcode_resolve(domain, info):
     if 'dev' in numpy.__version__:
         return f"https://github.com/numpy/numpy/blob/main/numpy/{fn}{linespec}"
     else:
-        return "https://github.com/numpy/numpy/blob/v%s/numpy/%s%s" % (
-           numpy.__version__, fn, linespec)
+        return (f"https://github.com/numpy/numpy/blob/v{numpy.__version__}/"
+                f"numpy/{fn}{linespec}")
 
 
 from pygments.lexer import inherit
@@ -596,7 +606,7 @@ from pygments.token import Comment
 class NumPyLexer(CLexer):
     name = 'NUMPYLEXER'
 
-    tokens = {
+    tokens = {  # noqa: RUF012
         'statements': [
             (r'@[a-zA-Z_]*@', Comment.Preproc, 'macro'),
             inherit,

@@ -155,14 +155,14 @@ def ewarn(message):
 
 
 class Expr:
-    """Represents a Fortran expression as a op-data pair.
+    """Represents a Fortran expression as an op-data pair.
 
     Expr instances are hashable and sortable.
     """
 
     @staticmethod
     def parse(s, language=Language.C):
-        """Parse a Fortran expression to a Expr.
+        """Parse a Fortran expression to an Expr.
         """
         return fromstring(s, language=language)
 
@@ -1236,6 +1236,8 @@ def replace_parenthesis(s):
 
     i = mn_i
     j = s.find(right, i)
+    if j == -1:
+        raise ValueError(f'Mismatch of {left + right} parenthesis in {s!r}')
 
     while s.count(left, i + 1, j) != s.count(right, i + 1, j):
         j = s.find(right, j + 1)
@@ -1317,10 +1319,10 @@ class _FromStringWorker:
         """Parse string within the given context.
 
         The context may define the result in case of ambiguous
-        expressions. For instance, consider expressions `f(x, y)` and
-        `(x, y) + (a, b)` where `f` is a function and pair `(x, y)`
+        expressions. For instance, consider expressions ``f(x, y)`` and
+        ``(x, y) + (a, b)`` where ``f`` is a function and pair ``(x, y)``
         denotes complex number. Specifying context as "args" or
-        "expr", the subexpression `(x, y)` will be parse to an
+        "expr", the subexpression ``(x, y)`` will be parse to an
         argument list or to a complex number, respectively.
         """
         if isinstance(s, (list, tuple)):
@@ -1478,7 +1480,7 @@ class _FromStringWorker:
                 if isinstance(items, Expr):
                     return items
             if paren in ['ROUNDDIV', 'SQUARE']:
-                # Expression is a array constructor
+                # Expression is an array constructor
                 if isinstance(items, Expr):
                     items = (items,)
                 return as_array(items)

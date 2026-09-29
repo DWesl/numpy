@@ -1738,7 +1738,12 @@ npyiter_allocate_buffers(NpyIter *iter, char **errmsg)
          */
         if (!(flags&NPY_OP_ITFLAG_BUFNEVER)) {
             npy_intp itemsize = op_dtype[iop]->elsize;
-            buffer = PyArray_malloc(itemsize*buffersize);
+            npy_intp alloc_size;
+            buffer = NULL;
+            if (!npy_mul_sizes_with_overflow(
+                        &alloc_size, itemsize, buffersize)) {
+                buffer = PyMem_RawMalloc(alloc_size);
+            }
             if (buffer == NULL) {
                 if (errmsg == NULL) {
                     PyErr_NoMemory();
@@ -1749,7 +1754,7 @@ npyiter_allocate_buffers(NpyIter *iter, char **errmsg)
                 goto fail;
             }
             if (PyDataType_FLAGCHK(op_dtype[iop], NPY_NEEDS_INIT)) {
-                memset(buffer, '\0', itemsize*buffersize);
+                memset(buffer, '\0', alloc_size);
             }
             buffers[iop] = buffer;
         }
@@ -1760,7 +1765,7 @@ npyiter_allocate_buffers(NpyIter *iter, char **errmsg)
 fail:
     for (i = 0; i < iop; ++i) {
         if (buffers[i] != NULL) {
-            PyArray_free(buffers[i]);
+            PyMem_RawFree(buffers[i]);
             buffers[i] = NULL;
         }
     }
@@ -2291,7 +2296,7 @@ npyiter_clear_buffers(NpyIter *iter)
         /* Buffer cannot be re-used (not that we should ever try!) */
         op_itflags[iop] &= ~NPY_OP_ITFLAG_BUF_REUSABLE;
 
-        int itemsize = dtypes[iop]->elsize;
+        npy_intp itemsize = dtypes[iop]->elsize;
         if (transferinfo[iop].clear.func(NULL,
                 dtypes[iop], *buffers, NBF_SIZE(bufferdata), itemsize,
                 transferinfo[iop].clear.auxdata) < 0) {

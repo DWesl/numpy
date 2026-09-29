@@ -14,10 +14,8 @@ from numpy import (
     greater_equal,
     less,
     less_equal,
-    not_equal,
-)
-from numpy import (
     multiply as _multiply_ufunc,
+    not_equal,
 )
 from numpy._core.multiarray import _vec_string
 from numpy._core.overrides import array_function_dispatch, set_module
@@ -40,6 +38,10 @@ from numpy._core.umath import (
     _strip_chars,
     _strip_whitespace,
     _zfill,
+    count as _count_ufunc,
+    endswith as _endswith_ufunc,
+    find as _find_ufunc,
+    index as _index_ufunc,
     isalnum,
     isalpha,
     isdecimal,
@@ -49,28 +51,10 @@ from numpy._core.umath import (
     isspace,
     istitle,
     isupper,
-    str_len,
-)
-from numpy._core.umath import (
-    count as _count_ufunc,
-)
-from numpy._core.umath import (
-    endswith as _endswith_ufunc,
-)
-from numpy._core.umath import (
-    find as _find_ufunc,
-)
-from numpy._core.umath import (
-    index as _index_ufunc,
-)
-from numpy._core.umath import (
     rfind as _rfind_ufunc,
-)
-from numpy._core.umath import (
     rindex as _rindex_ufunc,
-)
-from numpy._core.umath import (
     startswith as _startswith_ufunc,
+    str_len,
 )
 
 
@@ -240,7 +224,7 @@ def mod(a, values):
 
     Parameters
     ----------
-    a : array_like, with `np.bytes_` or `np.str_` dtype
+    a : array_like, with ``bytes_`` or ``str_`` dtype
 
     values : array_like of values
        These values will be element-wise interpolated into the string.
@@ -279,7 +263,7 @@ def find(a, sub, start=0, end=None):
     ----------
     a : array_like, with ``StringDType``, ``bytes_`` or ``str_`` dtype
 
-    sub : array_like, with `np.bytes_` or `np.str_` dtype
+    sub : array_like, with ``bytes_`` or ``str_`` dtype
         The substring to search for.
 
     start, end : array_like, with any integer dtype
@@ -391,9 +375,9 @@ def rindex(a, sub, start=0, end=None):
 
     Parameters
     ----------
-    a : array-like, with `np.bytes_` or `np.str_` dtype
+    a : array-like, with ``bytes_`` or ``str_`` dtype
 
-    sub : array-like, with `np.bytes_` or `np.str_` dtype
+    sub : array-like, with ``bytes_`` or ``str_`` dtype
 
     start, end : array-like, with any integer dtype, optional
 
@@ -566,7 +550,7 @@ def decode(a, encoding=None, errors=None):
        The name of an encoding
 
     errors : str, optional
-       Specifies how to handle encoding errors
+       Specifies how to handle decoding errors
 
     Returns
     -------
@@ -600,7 +584,7 @@ def decode(a, encoding=None, errors=None):
 @set_module("numpy.strings")
 @array_function_dispatch(_code_dispatcher)
 def encode(a, encoding=None, errors=None):
-    """
+    r"""
     Calls :meth:`str.encode` element-wise.
 
     The set of available codecs comes from the Python standard library,
@@ -1347,16 +1331,20 @@ def replace(a, old, new, count=-1):
 
     arr = np.asanyarray(a)
     old_dtype = getattr(old, 'dtype', None)
-    old = np.asanyarray(old)
+    old_arr = np.asanyarray(old)
     new_dtype = getattr(new, 'dtype', None)
-    new = np.asanyarray(new)
+    new_arr = np.asanyarray(new)
 
-    if np.result_type(arr, old, new).char == "T":
-        return _replace(arr, old, new, count)
+    if np.result_type(arr, old_arr, new_arr).char == "T":
+        # pass exact str objects so the ufunc converts them directly
+        a = a if type(a) is str else arr
+        old = old if type(old) is str else old_arr
+        new = new if type(new) is str else new_arr
+        return _replace(a, old, new, count)
 
     a_dt = arr.dtype
-    old = old.astype(old_dtype or a_dt, copy=False)
-    new = new.astype(new_dtype or a_dt, copy=False)
+    old = old_arr.astype(old_dtype or a_dt.char, copy=False)
+    new = new_arr.astype(new_dtype or a_dt.char, copy=False)
     max_int64 = np.iinfo(np.int64).max
     counts = _count_ufunc(arr, old, 0, max_int64)
     counts = np.where(count < 0, counts, np.minimum(counts, count))
@@ -1593,13 +1581,17 @@ def partition(a, sep):
      array(['is nice!'], dtype='<U8'))
 
     """
-    a = np.asanyarray(a)
-    sep = np.asanyarray(sep)
+    a_arr = np.asanyarray(a)
+    sep_arr = np.asanyarray(sep)
 
-    if np.result_type(a, sep).char == "T":
+    if np.result_type(a_arr, sep_arr).char == "T":
+        # pass exact str objects so the ufunc converts them directly
+        a = a if type(a) is str else a_arr
+        sep = sep if type(sep) is str else sep_arr
         return _partition(a, sep)
 
-    sep = sep.astype(a.dtype, copy=False)
+    a = a_arr
+    sep = sep_arr.astype(a_arr.dtype.char, copy=False)
     pos = _find_ufunc(a, sep, 0, MAX)
     a_len = str_len(a)
     sep_len = str_len(sep)
@@ -1662,13 +1654,17 @@ def rpartition(a, sep):
      array(['', '  ', 'Bba'], dtype='<U3'))
 
     """
-    a = np.asanyarray(a)
-    sep = np.asanyarray(sep)
+    a_arr = np.asanyarray(a)
+    sep_arr = np.asanyarray(sep)
 
-    if np.result_type(a, sep).char == "T":
+    if np.result_type(a_arr, sep_arr).char == "T":
+        # pass exact str objects so the ufunc converts them directly
+        a = a if type(a) is str else a_arr
+        sep = sep if type(sep) is str else sep_arr
         return _rpartition(a, sep)
 
-    sep = sep.astype(a.dtype, copy=False)
+    a = a_arr
+    sep = sep_arr.astype(a_arr.dtype.char, copy=False)
     pos = _rfind_ufunc(a, sep, 0, MAX)
     a_len = str_len(a)
     sep_len = str_len(sep)
@@ -1705,7 +1701,7 @@ def translate(a, table, deletechars=None):
 
     Parameters
     ----------
-    a : array-like, with `np.bytes_` or `np.str_` dtype
+    a : array-like, with ``bytes_`` or ``str_`` dtype
 
     table : str of length 256
 
@@ -1743,7 +1739,7 @@ def translate(a, table, deletechars=None):
         )
 
 @set_module("numpy.strings")
-def slice(a, start=None, stop=None, step=None, /):
+def slice(a, start=None, stop=np._NoValue, step=None, /):
     """
     Slice the strings in `a` by slices specified by `start`, `stop`, `step`.
     Like in the regular Python `slice` object, if only `start` is
@@ -1776,6 +1772,9 @@ def slice(a, start=None, stop=None, step=None, /):
     >>> np.strings.slice(a, 2)
     array(['he', 'wo'], dtype='<U5')
 
+    >>> np.strings.slice(a, 2, None)
+    array(['llo', 'rld'], dtype='<U5')
+
     >>> np.strings.slice(a, 1, 5, 2)
     array(['el', 'ol'], dtype='<U5')
 
@@ -1791,6 +1790,9 @@ def slice(a, start=None, stop=None, step=None, /):
     >>> np.strings.slice(b, -2)
     array(['hello wor', 'γεια σου κόσ', '你好', '👋'], dtype=StringDType())
 
+    >>> np.strings.slice(b, -2, None)
+    array(['ld', 'με', '世界', ' 🌍'], dtype=StringDType())
+
     >>> np.strings.slice(b, [3, -10, 2, -3], [-1, -2, -1, 3])
     array(['lo worl', ' σου κόσ', '世', '👋 🌍'], dtype=StringDType())
 
@@ -1801,7 +1803,7 @@ def slice(a, start=None, stop=None, step=None, /):
     """
     # Just like in the construction of a regular slice object, if only start
     # is specified then start will become stop, see logic in slice_new.
-    if stop is None:
+    if stop is np._NoValue:
         stop = start
         start = None
 

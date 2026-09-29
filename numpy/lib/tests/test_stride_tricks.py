@@ -1,7 +1,7 @@
 import pytest
 
 import numpy as np
-from numpy._core._rational_tests import rational
+from numpy._core._rational_tests import rational, rational2
 from numpy.lib._stride_tricks_impl import (
     _broadcast_shape,
     as_strided,
@@ -16,7 +16,6 @@ from numpy.testing import (
     assert_equal,
     assert_raises,
     assert_raises_regex,
-    assert_warns,
 )
 
 
@@ -405,6 +404,13 @@ def test_as_strided():
     assert_equal(a.dtype, a_view.dtype)
     assert_array_equal([r] * 3, a_view)
 
+    # Also exercise the new-DType-API rational variant.
+    r = [rational2(i) for i in range(4)]
+    a = np.array(r, dtype=rational2)
+    a_view = as_strided(a, shape=(3, 4), strides=(0, a.itemsize))
+    assert_equal(a.dtype, a_view.dtype)
+    assert_array_equal([r] * 3, a_view)
+
 
 class TestSlidingWindowView:
     def test_1d(self):
@@ -585,37 +591,31 @@ def test_writeable():
     assert_equal(result.flags.writeable, False)
     assert_raises(ValueError, result.__setitem__, slice(None), 0)
 
-    # but the result of broadcast_arrays needs to be writeable, to
-    # preserve backwards compatibility
-    test_cases = [((False,), broadcast_arrays(original,)),
-                  ((True, False), broadcast_arrays(0, original))]
-    for is_broadcast, results in test_cases:
-        for array_is_broadcast, result in zip(is_broadcast, results):
-            # This will change to False in a future version
-            if array_is_broadcast:
-                with assert_warns(FutureWarning):
-                    assert_equal(result.flags.writeable, True)
-                with assert_warns(DeprecationWarning):
-                    result[:] = 0
-                # Warning not emitted, writing to the array resets it
-                assert_equal(result.flags.writeable, True)
-            else:
-                # No warning:
-                assert_equal(result.flags.writeable, True)
+    # the results of broadcast_arrays are read-only as well, also for the
+    # arrays that did not need broadcasting (gh-13974). This holds for the
+    # nditer fast path, the subclass path and the many-arguments path.
+    for results in [broadcast_arrays(original,),
+                    broadcast_arrays(0, original),
+                    broadcast_arrays(0, original, subok=True),
+                    broadcast_arrays(0, *[original] * 64)]:
+        for result in results:
+            assert not result.flags.writeable
+            assert_raises(ValueError, result.__setitem__, slice(None), 0)
+            assert memoryview(result).readonly
 
     for results in [broadcast_arrays(original),
                     broadcast_arrays(0, original)]:
         for result in results:
-            # resets the warn_on_write DeprecationWarning
+            # the views can be made writeable explicitly, as the base is
+            # writeable (writing to a broadcast view is a bad idea though)
             result.flags.writeable = True
-            # check: no warning emitted
-            assert_equal(result.flags.writeable, True)
+            assert result.flags.writeable
             result[:] = 0
 
     # keep readonly input readonly
     original.flags.writeable = False
     _, result = broadcast_arrays(0, original)
-    assert_equal(result.flags.writeable, False)
+    assert not result.flags.writeable
 
     # regression test for GH6491
     shape = (2,)
@@ -627,23 +627,60 @@ def test_writeable():
 
 
 def test_writeable_memoryview():
-    # The result of broadcast_arrays exports as a non-writeable memoryview
-    # because otherwise there is no good way to opt in to the new behaviour
-    # (i.e. you would need to set writeable to False explicitly).
+    # The result of broadcast_arrays exports as a non-writeable memoryview.
     # See gh-13929.
     original = np.array([1, 2, 3])
 
-    test_cases = [((False, ), broadcast_arrays(original,)),
-                  ((True, False), broadcast_arrays(0, original))]
-    for is_broadcast, results in test_cases:
-        for array_is_broadcast, result in zip(is_broadcast, results):
-            # This will change to False in a future version
-            if array_is_broadcast:
-                # memoryview(result, writable=True) will give warning but cannot
-                # be tested using the python API.
-                assert memoryview(result).readonly
-            else:
-                assert not memoryview(result).readonly
+    for results in [broadcast_arrays(original,),
+                    broadcast_arrays(0, original)]:
+        for result in results:
+            assert memoryview(result).readonly
+
+
+def test_broadcast_arrays_no_args():
+    assert broadcast_arrays() == ()
+    assert broadcast_arrays(subok=True) == ()
+
+
+@pytest.mark.parametrize("subok", [False, True])
+def test_broadcast_arrays_many_args(subok):
+    # A single nditer handles at most 64 operands; more arguments (and
+    # subok=True) use a chunked fallback that must give the same views.
+    a = SimpleSubClass([1, 2, 3])
+    b = np.arange(2).reshape(-1, 1)
+    args = [a] * 70 + [b, np.array(5), 7]
+    results = broadcast_arrays(*args, subok=subok)
+    assert isinstance(results, tuple)
+    assert len(results) == len(args)
+    # the same views as produced by the nditer fast path
+    expected = broadcast_arrays(*args[:63], b, subok=subok)
+    for i, result in enumerate(results):
+        assert result.shape == (2, 3)
+        assert result.flags.writeable is False
+        assert_array_equal(result, np.broadcast_to(args[i], (2, 3)))
+        if i < 63:
+            assert result.strides == expected[i].strides
+            assert type(result) is type(expected[i])
+    assert results[70].strides == (b.strides[0], 0)
+    assert results[71].strides == (0, 0)
+    assert results[72].strides == (0, 0)
+    if subok:
+        assert type(results[0]) is SimpleSubClass
+        assert results[0].info == 'simple finalized'
+        assert type(results[69]) is SimpleSubClass
+    else:
+        assert type(results[0]) is np.ndarray
+    assert type(results[70]) is np.ndarray
+
+    # 0-d results and zero-sized results
+    results = broadcast_arrays(*([1] * 65), subok=subok)
+    assert all(r.shape == () and r.flags.writeable is False for r in results)
+    results = broadcast_arrays(np.zeros((0, 3)), *([a] * 64), subok=subok)
+    assert all(r.shape == (0, 3) for r in results)
+
+    # shape mismatch
+    with pytest.raises(ValueError, match="cannot be broadcast"):
+        broadcast_arrays(*([a] * 65), np.arange(4), subok=subok)
 
 
 def test_reference_types():
@@ -654,3 +691,231 @@ def test_reference_types():
 
     actual, _ = broadcast_arrays(input_array, np.ones(3))
     assert_array_equal(expected, actual)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        np.int8,
+        np.int16,
+        np.int32,
+        np.int64,
+        np.uint8,
+        np.uint16,
+        np.uint32,
+        np.uint64,
+        np.float32,
+        np.float64,
+        np.complex64,
+        np.complex128,
+    ],
+)
+def test_as_strided_checked_different_dtypes(dtype):
+    """Test as_strided with check_bounds=True with different dtypes."""
+    x = np.arange(10, dtype=dtype)
+    y = as_strided(x, shape=(5,), strides=(x.itemsize * 2,), check_bounds=True)
+    assert y.shape == (5,)
+    assert y.dtype == dtype
+
+
+@pytest.mark.parametrize(
+    "size,view_size,stride_mult",
+    [
+        (10, 5, 1),  # Contiguous view
+        (10, 5, 2),  # Every other element
+        (20, 10, 2),  # Every other element
+        (100, 10, 10),  # Every 10th element
+    ],
+)
+def test_as_strided_checked_1d_positive_strides(size, view_size, stride_mult):
+    """Test 1D arrays with positive strides."""
+    x = np.arange(size, dtype=np.int64)
+    itemsize = x.itemsize
+    y = as_strided(
+        x, shape=(view_size,), strides=(itemsize * stride_mult,), check_bounds=True
+    )
+    assert y.shape == (view_size,)
+    # Verify data correctness
+    expected = x[::stride_mult][:view_size]
+    assert_array_equal(y, expected)
+
+
+@pytest.mark.parametrize(
+    "shape,window_shape",
+    [
+        ((10,), (3,)),
+        ((20,), (5,)),
+        ((100,), (10,)),
+    ],
+)
+def test_as_strided_checked_sliding_window_1d(shape, window_shape):
+    """Test sliding window views in 1D."""
+    x = np.arange(shape[0], dtype=np.int64)
+    itemsize = x.itemsize
+    n_windows = shape[0] - window_shape[0] + 1
+    view_shape = (n_windows, window_shape[0])
+    view_strides = (itemsize, itemsize)
+
+    y = as_strided(x, shape=view_shape, strides=view_strides, check_bounds=True)
+    assert y.shape == view_shape
+    # Check first and last windows
+    assert_array_equal(y[0], x[: window_shape[0]])
+    assert_array_equal(y[-1], x[-window_shape[0] :])
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (3, 4),
+        (5, 6),
+        (10, 10),
+    ],
+)
+def test_as_strided_checked_2d_default_strides(shape):
+    """Test 2D arrays with default strides."""
+    x = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
+    y = as_strided(x, check_bounds=True)  # Should use default shape and strides
+    assert_array_equal(y, x)
+
+
+@pytest.mark.parametrize("size", [0, 1, 2, 10, 100])
+def test_as_strided_checked_zero_stride_broadcasting(size):
+    """Test zero strides (broadcasting a single value)."""
+    x = np.array([42], dtype=np.int64)
+    y = as_strided(x, shape=(size,), strides=(0,), check_bounds=True)
+    assert y.shape == (size,)
+    if size > 0:
+        assert_(np.all(y == 42))
+
+
+@pytest.mark.parametrize(
+    "size,shape,strides",
+    [
+        # Strides too large
+        (10, (5,), (32,)),
+        (10, (10,), (16,)),
+        (20, (15,), (16,)),
+        # Shape too large for strides
+        (10, (20,), (8,)),
+        (10, (100,), (8,)),
+        # 2D out of bounds cases
+        (20, (5, 5), (80, 8)),
+        (20, (3, 10), (64, 8)),
+        # Negative strides that go before array start
+        (10, (5,), (-8,)),
+        (10, (10,), (-8,)),
+        (20, (5,), (-16,)),
+        # ND negative strides
+        (10, (2, 3, 4), (96, 32, -8)),
+        (20, (3, 4), (64, -8)),
+        (30, (2, 3, 4), (-96, 32, 8)),
+    ],
+)
+def test_as_strided_checked_out_of_bounds_positive_strides(size, shape, strides):
+    """Test that out-of-bounds positive strides raise ValueError."""
+    x = np.arange(size, dtype=np.int64)
+    with pytest.raises(ValueError, match="out of bounds"):
+        as_strided(x, shape=shape, strides=strides, check_bounds=True)
+
+
+def test_as_strided_checked_view_of_larger_array():
+    """Test as_strided
+
+    - with check_bounds=True
+    - considers the base array bounds, not just the view.
+
+    """
+    a = np.arange(1000, dtype=np.int64)
+
+    b = a[:2]
+
+    # This should succeed because the underlying array has enough memory
+    y = as_strided(b, shape=(2,), strides=(400,), check_bounds=True)
+    assert_equal(y.shape, (2,))
+    assert_equal(y[0], 0)
+    assert_equal(y[1], 50)
+
+
+def test_as_strided_checked_view_with_offset():
+    """Test as_strided
+
+    - with check_bounds=True
+    - on a view that doesn't start at the beginning.
+    """
+    a = np.arange(1000, dtype=np.int64)
+
+    b = a[100:102]
+
+    y = as_strided(b, shape=(2,), strides=(80,), check_bounds=True)
+    assert_equal(y.shape, (2,))
+    assert_equal(y[0], 100)
+    assert_equal(y[1], 110)
+
+
+def test_as_strided_checked_view_out_of_bounds_negative():
+    """Test that negative strides on a view correctly detect out of bounds."""
+    a = np.arange(1000, dtype=np.int64)
+
+    b = a[5:7]
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        as_strided(b, shape=(2,), strides=(-48,), check_bounds=True)
+
+
+def test_as_strided_checked_view_out_of_bounds_positive():
+    """Test that positive strides on a view correctly detect out of bounds."""
+    a = np.arange(100, dtype=np.int64)
+
+    b = a[95:97]
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        as_strided(b, shape=(2,), strides=(200,), check_bounds=True)
+
+
+def test_as_strided_checked_nested_views():
+    """Test as_strided with check_bounds=True on a view of a view."""
+    a = np.arange(1000, dtype=np.int64)
+    b = a[10:100]
+    c = b[5:10]
+
+    y = as_strided(c, shape=(2,), strides=(160,), check_bounds=True)
+    assert_equal(y.shape, (2,))
+    assert_equal(y[0], 15)
+    assert_equal(y[1], 35)
+
+
+def test_as_strided_checked_sliced_array():
+    """Test various slicing scenarios."""
+    a = np.arange(200, dtype=np.int64)
+
+    b = a[10:20]
+    y = as_strided(b, shape=(5,), strides=(16,), check_bounds=True)
+    assert_equal(y.shape, (5,))
+
+    c = a[::2]
+    y = as_strided(c, shape=(10,), strides=(16,), check_bounds=True)
+    assert_equal(y.shape, (10,))
+
+
+@pytest.mark.parametrize(
+    "start,stop,stride_bytes,should_pass",
+    [
+        (0, 10, 552, True),
+        (0, 10, 552 + 1, True),
+        (90, 95, 72, True),
+        (90, 95, 72 + 1, False),
+        (5, 7, -40, True),
+        (5, 7, -40 - 1, False),
+    ],
+)
+def test_as_strided_checked_view_parametrized(start, stop, stride_bytes, should_pass):
+    """Parametrized test for various view and stride combinations."""
+    a = np.arange(100, dtype=np.int64)
+    b = a[start:stop]
+
+    if should_pass:
+        y = as_strided(b, shape=(2,), strides=(stride_bytes,), check_bounds=True)
+        assert_equal(y.shape, (2,))
+    else:
+        with pytest.raises(ValueError, match="out of bounds"):
+            as_strided(b, shape=(2,), strides=(stride_bytes,), check_bounds=True)

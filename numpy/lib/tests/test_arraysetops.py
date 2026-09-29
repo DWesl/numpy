@@ -5,6 +5,8 @@ import pytest
 
 import numpy as np
 from numpy import ediff1d, intersect1d, isin, setdiff1d, setxor1d, union1d, unique
+from numpy._core.tests._natype import pd_NA
+from numpy.dtypes import StringDType
 from numpy.exceptions import AxisError
 from numpy.testing import (
     assert_array_equal,
@@ -630,52 +632,59 @@ class TestSetOps:
 
 class TestUnique:
 
+    @pytest.fixture(
+        params=[np.nan, np.float32("nan"), pd_NA],
+        ids=["np.nan", "np.float32('nan')", "pandas.NA"],
+    )
+    def nan_string_dtype(self, request):
+        return StringDType(na_object=request.param)
+
     def check_all(self, a, b, i1, i2, c, dt):
         base_msg = 'check {0} failed for type {1}'
 
         msg = base_msg.format('values', dt)
         v = unique(a)
         assert_array_equal(v, b, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format('return_index', dt)
         v, j = unique(a, True, False, False)
         assert_array_equal(v, b, msg)
         assert_array_equal(j, i1, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format('return_inverse', dt)
         v, j = unique(a, False, True, False)
         assert_array_equal(v, b, msg)
         assert_array_equal(j, i2, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format('return_counts', dt)
         v, j = unique(a, False, False, True)
         assert_array_equal(v, b, msg)
         assert_array_equal(j, c, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format('return_index and return_inverse', dt)
         v, j1, j2 = unique(a, True, True, False)
         assert_array_equal(v, b, msg)
         assert_array_equal(j1, i1, msg)
         assert_array_equal(j2, i2, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format('return_index and return_counts', dt)
         v, j1, j2 = unique(a, True, False, True)
         assert_array_equal(v, b, msg)
         assert_array_equal(j1, i1, msg)
         assert_array_equal(j2, c, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format('return_inverse and return_counts', dt)
         v, j1, j2 = unique(a, False, True, True)
         assert_array_equal(v, b, msg)
         assert_array_equal(j1, i2, msg)
         assert_array_equal(j2, c, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
         msg = base_msg.format(('return_index, return_inverse '
                                 'and return_counts'), dt)
@@ -684,9 +693,10 @@ class TestUnique:
         assert_array_equal(j1, i1, msg)
         assert_array_equal(j2, i2, msg)
         assert_array_equal(j3, c, msg)
-        assert type(v) == type(b)
+        assert type(v) is type(b)
 
     def get_types(self):
+
         types = []
         types.extend(np.typecodes['AllInteger'])
         types.extend(np.typecodes['AllFloat'])
@@ -694,6 +704,7 @@ class TestUnique:
         types.append('timedelta64[D]')
         return types
 
+    @pytest.mark.filterwarnings(r"ignore:\w+ chararray \w+:DeprecationWarning")
     def test_unique_1d(self):
 
         a = [5, 7, 1, 2, 1, 5, 7] * 10
@@ -725,7 +736,10 @@ class TestUnique:
 
         # test for ticket #2799
         aa = [1. + 0.j, 1 - 1.j, 1]
-        assert_array_equal(np.unique(aa), [1. - 1.j, 1. + 0.j])
+        assert_array_equal(
+            np.sort(np.unique(aa)),
+            [1. - 1.j, 1.],
+        )
 
         # test for ticket #4785
         a = [(1, 2), (1, 2), (2, 3)]
@@ -760,7 +774,8 @@ class TestUnique:
         ua_idx = [2, 0, 1]
         ua_inv = [1, 2, 0, 2]
         ua_cnt = [1, 1, 2]
-        assert_equal(np.unique(a), ua)
+        # order of unique values is not guaranteed
+        assert_equal(np.sort(np.unique(a)), np.sort(ua))
         assert_equal(np.unique(a, return_index=True), (ua, ua_idx))
         assert_equal(np.unique(a, return_inverse=True), (ua, ua_inv))
         assert_equal(np.unique(a, return_counts=True), (ua, ua_cnt))
@@ -771,13 +786,14 @@ class TestUnique:
         ua_idx = [2, 0, 3]
         ua_inv = [1, 2, 0, 2, 2]
         ua_cnt = [1, 1, 3]
-        assert_equal(np.unique(a), ua)
+        # order of unique values is not guaranteed
+        assert_equal(np.sort(np.unique(a)), np.sort(ua))
         assert_equal(np.unique(a, return_index=True), (ua, ua_idx))
         assert_equal(np.unique(a, return_inverse=True), (ua, ua_inv))
         assert_equal(np.unique(a, return_counts=True), (ua, ua_cnt))
 
         # test for ticket 2111 - datetime64
-        nat = np.datetime64('nat')
+        nat = np.datetime64('nat', 'D')
         a = [np.datetime64('2020-12-26'), nat, np.datetime64('2020-12-24'), nat]
         ua = [np.datetime64('2020-12-24'), np.datetime64('2020-12-26'), nat]
         ua_idx = [2, 0, 1]
@@ -789,7 +805,7 @@ class TestUnique:
         assert_equal(np.unique(a, return_counts=True), (ua, ua_cnt))
 
         # test for ticket 2111 - timedelta
-        nat = np.timedelta64('nat')
+        nat = np.timedelta64('nat', 's')
         a = [np.timedelta64(1, 'D'), nat, np.timedelta64(1, 'h'), nat]
         ua = [np.timedelta64(1, 'h'), np.timedelta64(1, 'D'), nat]
         ua_idx = [2, 0, 1]
@@ -813,7 +829,9 @@ class TestUnique:
 
     def test_unique_zero_sized(self):
         # test for zero-sized arrays
-        for dt in self.get_types():
+        types = self.get_types()
+        types.extend('SU')
+        for dt in types:
             a = np.array([], dt)
             b = np.array([], dt)
             i1 = np.array([], np.int64)
@@ -837,6 +855,147 @@ class TestUnique:
             aa = Subclass(a.shape, dtype=dt, buffer=a)
             bb = Subclass(b.shape, dtype=dt, buffer=b)
             self.check_all(aa, bb, i1, i2, c, dt)
+
+    def test_unique_byte_string_hash_based(self):
+        # test for byte string arrays
+        arr = ['apple', 'banana', 'apple', 'cherry', 'date', 'banana', 'fig', 'grape']
+        unq_sorted = ['apple', 'banana', 'cherry', 'date', 'fig', 'grape']
+
+        a1 = unique(arr, sorted=False)
+        # the result varies depending on the impl of std::unordered_set,
+        # so we check them by sorting
+        assert_array_equal(sorted(a1.tolist()), unq_sorted)
+
+    def test_unique_unicode_string_hash_based(self):
+        # test for unicode string arrays
+        arr = [
+            'café', 'cafe', 'café', 'naïve', 'naive',
+            'résumé', 'naïve', 'resume', 'résumé',
+        ]
+        unq_sorted = ['cafe', 'café', 'naive', 'naïve', 'resume', 'résumé']
+
+        a1 = unique(arr, sorted=False)
+        # the result varies depending on the impl of std::unordered_set,
+        # so we check them by sorting
+        assert_array_equal(sorted(a1.tolist()), unq_sorted)
+
+    @pytest.mark.parametrize("equal_nan", [True, False])
+    @pytest.mark.parametrize("na_object", [None, object()], ids=["None", "object"])
+    def test_unique_vstring_hash_based(self, equal_nan, na_object):
+        # test for unicode and nullable string arrays
+        a = np.array([
+                # short strings
+                '', '',
+                'straße',
+                na_object,
+                'strasse',
+                'straße',
+                na_object,
+                'niño',
+                'nino',
+                'élève',
+                'eleve',
+                'niño',
+                'élève',
+                # medium strings
+                'b' * 20,
+                'ß' * 30,
+                na_object,
+                'é' * 30,
+                'e' * 20,
+                'ß' * 30,
+                'n' * 30,
+                'ñ' * 20,
+                na_object,
+                'e' * 20,
+                'ñ' * 20,
+                # long strings
+                'b' * 300,
+                'ß' * 400,
+                na_object,
+                'é' * 400,
+                'e' * 300,
+                'ß' * 400,
+                'n' * 400,
+                'ñ' * 300,
+                na_object,
+                'e' * 300,
+                'ñ' * 300,
+            ],
+            dtype=StringDType(na_object=na_object)
+        )
+        unq_sorted_wo_na = [
+            '',
+            'b' * 20,
+            'b' * 300,
+            'e' * 20,
+            'e' * 300,
+            'eleve',
+            'nino',
+            'niño',
+            'n' * 30,
+            'n' * 400,
+            'strasse',
+            'straße',
+            'ß' * 30,
+            'ß' * 400,
+            'élève',
+            'é' * 30,
+            'é' * 400,
+            'ñ' * 20,
+            'ñ' * 300,
+        ]
+
+        a1 = unique(a, sorted=False, equal_nan=equal_nan)
+        assert a1.dtype == a.dtype
+        # the result varies depending on the impl of std::unordered_set,
+        # so we check them by sorting
+
+        # a1 should have exactly one na_object
+        count_na = sum(x is na_object for x in a1)
+        assert_equal(count_na, 1)
+
+        a1_wo_na = sorted(x for x in a1 if x is not na_object)
+        assert_array_equal(a1_wo_na, unq_sorted_wo_na)
+
+    @pytest.mark.parametrize("equal_nan", [True, False])
+    @pytest.mark.parametrize("na_object", ["", "NA", "NAé" * 10])
+    def test_unique_vstring_string_nulls(self, na_object, equal_nan):
+        dtype = StringDType(na_object=na_object)
+        # The plain StringDType array stores an ordinary string; the nullable
+        # array stores the same value as a null.
+        a = np.concatenate((
+            np.array([na_object, "value"], dtype="T"),
+            np.array([na_object, na_object, "value"], dtype=dtype),
+        ))
+        expected = np.array([na_object, "value"], dtype=dtype)
+        assert_array_equal(unique(a, equal_nan=equal_nan), expected)
+        assert_array_equal(unique(a[::-1], equal_nan=equal_nan), expected)
+
+    def test_unique_vstring_nan_metadata(self, nan_string_dtype):
+        a = np.array([np.nan, "b", "a", np.nan, "b", np.nan],
+                     dtype=nan_string_dtype)
+        self.check_all(a, a[[2, 1, 0]], [2, 1, 0], [2, 1, 0, 2, 1, 2],
+                       [1, 2, 3], nan_string_dtype)
+
+    def test_unique_vstring_nan_not_equal(self, nan_string_dtype):
+        a = np.array([np.nan, "b", "a", np.nan, "b", np.nan],
+                     dtype=nan_string_dtype)
+        v, indices, inverse, counts = unique(a, True, True, True, equal_nan=False)
+        assert_array_equal(v, a[[2, 1, 0, 3, 5]])
+        assert_array_equal(indices, [2, 1, 0, 3, 5])
+        assert_array_equal(inverse, [2, 1, 0, 3, 1, 4])
+        assert_array_equal(counts, [1, 2, 1, 1, 1])
+
+    def test_unique_vstring_errors(self):
+        a = np.array(
+            [
+                'apple', 'banana', 'apple', None, 'cherry',
+                'date', 'banana', 'fig', None, 'grape',
+            ] * 2,
+            dtype=StringDType(na_object=None)
+        )
+        assert_raises(ValueError, unique, a, equal_nan=False)
 
     @pytest.mark.parametrize("arg", ["return_index", "return_inverse", "return_counts"])
     def test_unsupported_hash_based(self, arg):
@@ -953,6 +1112,18 @@ class TestUnique:
         assert_array_equal(v.data, v2.data, msg)
         assert_array_equal(v.mask, v2.mask, msg)
 
+    def test_unique_masked_nan(self):
+        # masked arrays always take the sort-based path and the data under
+        # the mask is nan
+        a = np.ma.masked_invalid([1.0, np.nan, 2.0])
+        v = np.unique(a)
+        assert_array_equal(v.compressed(), [1.0, 2.0])
+        assert_array_equal(v.mask, [False, False, True])
+        v, c = np.unique(a, return_counts=True)
+        assert_array_equal(v.compressed(), [1.0, 2.0])
+        assert_array_equal(v.mask, [False, False, True])
+        assert_array_equal(c, [1, 1, 1])
+
     def test_unique_sort_order_with_axis(self):
         # These tests fail if sorting along axis is done by treating subarrays
         # as unsigned byte strings.  See gh-10495.
@@ -1015,7 +1186,13 @@ class TestUnique:
         assert_array_equal(not_unq, np.array([1, np.nan, np.nan, np.nan]))
 
     def test_unique_array_api_functions(self):
-        arr = np.array([np.nan, 1, 4, 1, 3, 4, np.nan, 5, 1])
+        arr = np.array(
+            [
+                np.nan, 1.0, 0.0, 4.0, -np.nan,
+                -0.0, 1.0, 3.0, 4.0, np.nan,
+                5.0, -0.0, 1.0, -np.nan, 0.0,
+            ],
+        )
 
         for res_unique_array_api, res_unique in [
             (
@@ -1042,8 +1219,14 @@ class TestUnique:
             )
         ]:
             assert len(res_unique_array_api) == len(res_unique)
+            if not isinstance(res_unique_array_api, tuple):
+                res_unique_array_api = (res_unique_array_api,)
+            if not isinstance(res_unique, tuple):
+                res_unique = (res_unique,)
+
             for actual, expected in zip(res_unique_array_api, res_unique):
-                assert_array_equal(actual, expected)
+                # Order of output is not guaranteed
+                assert_equal(np.sort(actual), np.sort(expected))
 
     def test_unique_inverse_shape(self):
         # Regression test for https://github.com/numpy/numpy/issues/25552
@@ -1072,3 +1255,30 @@ class TestUnique:
         u = np.unique(mat)
         expected = np.unique(np.asarray(mat))
         assert_array_equal(u, expected, strict=True)
+
+    def test_unique_axis0_equal_nan_on_1d_array(self):
+        # Test Issue #29336
+        arr1d = np.array([np.nan, 0, 0, np.nan])
+        expected = np.array([0., np.nan])
+        result = np.unique(arr1d, axis=0, equal_nan=True)
+        assert_array_equal(result, expected)
+
+    def test_unique_axis_minus1_eq_on_1d_array(self):
+        arr1d = np.array([np.nan, 0, 0, np.nan])
+        expected = np.array([0., np.nan])
+        result = np.unique(arr1d, axis=-1, equal_nan=True)
+        assert_array_equal(result, expected)
+
+    def test_unique_axis_float_raises_typeerror(self):
+        arr1d = np.array([np.nan, 0, 0, np.nan])
+        with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
+            np.unique(arr1d, axis=0.0, equal_nan=False)
+
+    @pytest.mark.parametrize('dt', [np.dtype('F'), np.dtype('D')])
+    @pytest.mark.parametrize('values', [[complex(0.0, -1), complex(-0.0, -1), 0],
+                                        [-200, complex(-200, -0.0), -1],
+                                        [-25, 3, -5j, complex(-25, -0.0), 3j]])
+    def test_unique_complex_signed_zeros(self, dt, values):
+        z = np.array(values, dtype=dt)
+        u = np.unique(z)
+        assert len(u) == len(values) - 1

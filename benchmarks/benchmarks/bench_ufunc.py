@@ -53,7 +53,7 @@ class ArrayFunctionDispatcher(Benchmark):
         except AttributeError:
             raise NotImplementedError
         self.args = []
-        for _, aarg in get_squares_().items():
+        for aarg in get_squares_().values():
             arg = (aarg,) * 1  # no nin
             try:
                 self.afdn(*arg)
@@ -71,6 +71,20 @@ class Broadcast(Benchmark):
         self.e = np.ones((100,), dtype=np.float64)
 
     def time_broadcast(self):
+        self.d - self.e
+
+
+class BroadcastTrailing(Benchmark):
+    # Broadcasting an operand over a short trailing axis refills the iterator
+    # buffer many times; see gh-13307, gh-17471 and gh-18028.
+    params = [1, 3, 10, 100]
+    param_names = ['trailing']
+
+    def setup(self, trailing):
+        self.d = np.ones((3000000 // trailing, trailing), dtype=np.float64)
+        self.e = np.ones((trailing,), dtype=np.float64)
+
+    def time_broadcast(self, trailing):
         self.d - self.e
 
 
@@ -100,7 +114,7 @@ class UFunc(Benchmark):
         except AttributeError:
             raise NotImplementedError
         self.args = []
-        for _, aarg in get_squares_().items():
+        for aarg in get_squares_().values():
             arg = (aarg,) * self.ufn.nin
             try:
                 self.ufn(*arg)
@@ -304,7 +318,7 @@ class DLPMethods(Benchmark):
 class NDArrayAsType(Benchmark):
     """ Benchmark for type conversion
     """
-    params = [list(itertools.combinations(TYPES1, 2))]
+    params = [list(itertools.product(TYPES1, TYPES1))]
     param_names = ['typeconv']
     timeout = 10
 

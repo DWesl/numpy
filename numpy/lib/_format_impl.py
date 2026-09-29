@@ -432,7 +432,7 @@ def _wrap_header_guess_version(header):
     except UnicodeEncodeError:
         pass
     else:
-        warnings.warn("Stored array in format 2.0. It can only be"
+        warnings.warn("Stored array in format 2.0. It can only be "
                       "read by NumPy >= 1.9", UserWarning, stacklevel=2)
         return ret
 
@@ -519,6 +519,9 @@ def read_array_header_1_0(fp, max_header_size=_MAX_HEADER_SIZE):
     ----------
     fp : filelike object
         A file object or something with a `.read()` method like a file.
+        Must be positioned at the start of the header, just after the
+        magic string and version bytes. This can be done by calling
+        `read_magic` on ``fp`` first.
 
     Returns
     -------
@@ -557,6 +560,9 @@ def read_array_header_2_0(fp, max_header_size=_MAX_HEADER_SIZE):
     ----------
     fp : filelike object
         A file object or something with a `.read()` method like a file.
+        Must be positioned at the start of the header, just after the
+        magic string and version bytes. This can be done by calling
+        `read_magic` on ``fp`` first.
     max_header_size : int, optional
         Maximum allowed size of the header.  Large headers may not be safe
         to load securely and thus require explicitly passing a larger value.
@@ -645,7 +651,7 @@ def _read_array_header(fp, version, max_header_size=_MAX_HEADER_SIZE):
             "may be necessary.")
 
     # The header is a pretty-printed string representation of a literal
-    # Python dictionary with trailing newlines padded to a ARRAY_ALIGN byte
+    # Python dictionary with trailing newlines padded to an ARRAY_ALIGN byte
     # boundary. The keys are strings.
     #   "shape" : tuple of int
     #   "fortran_order" : bool
@@ -838,9 +844,11 @@ def read_array(fp, allow_pickle=False, pickle_kwargs=None, *,
             array = pickle.load(fp, **pickle_kwargs)
         except UnicodeError as err:
             # Friendlier error message
-            raise UnicodeError("Unpickling a python object failed: %r\n"
-                               "You may need to pass the encoding= option "
-                               "to numpy.load" % (err,)) from err
+            raise UnicodeError(
+                f"Unpickling a python object failed: {err!r}\n"
+                "You may need to pass the encoding= option "
+                "to numpy.load"
+            ) from err
     else:
         if isfileobj(fp):
             # We can use the fast fromfile() function.
@@ -879,10 +887,10 @@ def read_array(fp, allow_pickle=False, pickle_kwargs=None, *,
             )
 
         if fortran_order:
-            array.shape = shape[::-1]
+            array = array.reshape(shape[::-1])
             array = array.transpose()
         else:
-            array.shape = shape
+            array = array.reshape(shape)
 
     return array
 

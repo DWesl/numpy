@@ -14,6 +14,7 @@ class Core(Benchmark):
         self.l_view = [memoryview(a) for a in self.l]
         self.l10x10 = np.ones((10, 10))
         self.float64_dtype = np.dtype(np.float64)
+        self.arr = np.arange(10000).reshape(100, 100)
 
     def time_array_1(self):
         np.array(1)
@@ -47,6 +48,9 @@ class Core(Benchmark):
 
     def time_can_cast(self):
         np.can_cast(self.l10x10, self.float64_dtype)
+
+    def time_tobytes_noncontiguous(self):
+        self.arr.T.tobytes()
 
     def time_can_cast_same_kind(self):
         np.can_cast(self.l10x10, self.float64_dtype, casting="same_kind")
@@ -107,6 +111,49 @@ class Core(Benchmark):
 
     def time_tril_indices_500(self):
         np.tril_indices(500)
+
+
+class SmallMethodDispatch(Benchmark):
+    # Small-array benchmarks for fromnumeric functions that dispatch to
+    # an ndarray method through the C helpers _wrapfunc/_wrapit
+    # (see gh-32165).
+    def setup(self):
+        self.a = np.arange(20)
+        self.m = np.ones((10, 10))
+        self.sorted = np.arange(20, dtype=np.float64)
+        self.lst = list(range(20))
+
+    def time_reshape(self):
+        np.reshape(self.a, (4, 5))
+
+    def time_transpose(self):
+        np.transpose(self.m)
+
+    def time_take(self):
+        np.take(self.a, [1, 2])
+
+    def time_argsort(self):
+        np.argsort(self.a)
+
+    def time_argmax_axis(self):
+        np.argmax(self.m, axis=0)
+
+    def time_searchsorted(self):
+        np.searchsorted(self.sorted, 5.5)
+
+    def time_cumsum(self):
+        np.cumsum(self.a)
+
+    def time_round(self):
+        np.round(self.a, 2)
+
+    def time_argsort_list(self):
+        # list input exercises the _wrapit conversion fallback
+        np.argsort(self.lst)
+
+    def time_cumsum_list(self):
+        # list input exercises the _wrapit conversion fallback
+        np.cumsum(self.lst)
 
 
 class Temporaries(Benchmark):

@@ -96,6 +96,7 @@ from .auxfuncs import (
     isintent_copy,
     isintent_hide,
     isintent_inout,
+    isintent_inplace,
     isintent_nothide,
     isintent_out,
     isintent_overwrite,
@@ -238,26 +239,18 @@ static PyMethodDef f2py_module_methods[] = {
     {NULL,NULL}
 };
 
-static struct PyModuleDef moduledef = {
-    PyModuleDef_HEAD_INIT,
-    "#modulename#",
-    NULL,
-    -1,
-    f2py_module_methods,
-    NULL,
-    NULL,
-    NULL,
-    NULL
-};
+static PyObject *f2py_module_interface_usercode(PyObject *m, PyObject *d) {
+    /* Returns a PyObject* because existing user code will return NULL on exit */
+    #interface_usercode#
+    return m;
+}
 
-PyMODINIT_FUNC PyInit_#modulename#(void) {
+static int f2py_module_exec(PyObject *m) {
     int i;
-    PyObject *m,*d, *s, *tmp;
-    m = #modulename#_module = PyModule_Create(&moduledef);
-    Py_SET_TYPE(&PyFortran_Type, &PyType_Type);
-    import_array();
-    if (PyErr_Occurred())
-        {PyErr_SetString(PyExc_ImportError, \"can't initialize module #modulename# (failed to import numpy)\"); return m;}
+    PyObject *d, *s, *tmp;
+    #modulename#_module = m;
+    Py_SET_TYPE((PyObject*)&PyFortran_Type, &PyType_Type);
+    import_array2(\"can't initialize module #modulename# (failed to import numpy)\", -1);
     d = PyModule_GetDict(m);
     s = PyUnicode_FromString(\"#f2py_version#\");
     PyDict_SetItemString(d, \"__version__\", s);
@@ -281,15 +274,11 @@ PyMODINIT_FUNC PyInit_#modulename#(void) {
         PyDict_SetItemString(d, f2py_routine_defs[i].name, tmp);
         Py_DECREF(tmp);
     }
+
 #initf2pywraphooks#
 #initf90modhooks#
 #initcommonhooks#
-#interface_usercode#
-
-#if Py_GIL_DISABLED
-    // signal whether this module supports running with the GIL disabled
-    PyUnstable_Module_SetGIL(m , #gil_used#);
-#endif
+    if (!f2py_module_interface_usercode(m, d)) return -1;
 
 #ifdef F2PY_REPORT_ATEXIT
     if (! PyErr_Occurred())
@@ -297,11 +286,62 @@ PyMODINIT_FUNC PyInit_#modulename#(void) {
 #endif
 
     if (PyType_Ready(&PyFortran_Type) < 0) {
-        return NULL;
+        return -1;
     }
 
-    return m;
+    return 0;
 }
+
+#ifndef Py_TARGET_ABI3T
+static PyModuleDef_Slot f2py_module_slots[] = {
+    {Py_mod_exec, (void*)f2py_module_exec},
+#ifdef Py_GIL_DISABLED
+    {Py_mod_gil, (void*)#gil_used#},
+#endif
+#if (defined(Py_LIMITED_API) && Py_LIMITED_API >= 0x030C0000) || (!defined(Py_LIMITED_API) && PY_VERSION_HEX >= 0x030C0000)
+    {Py_mod_multiple_interpreters, Py_MOD_MULTIPLE_INTERPRETERS_NOT_SUPPORTED},
+#endif
+    {0, NULL}
+};
+
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "#modulename#",
+    NULL,
+    0,
+    f2py_module_methods,
+    f2py_module_slots,
+    NULL,
+    NULL,
+    NULL
+};
+
+PyMODINIT_FUNC PyInit_#modulename#(void) {
+    return PyModuleDef_Init(&moduledef);
+}
+#endif
+
+#if (defined(Py_LIMITED_API) && Py_LIMITED_API >= 0x030F0000) || (!defined(Py_LIMITED_API) && PY_VERSION_HEX >= 0x030F0000)
+PyABIInfo_VAR(f2py_abi_info);
+
+static PySlot f2py_module_pyslots[] = {
+    PySlot_PTR_STATIC(Py_mod_abi, &f2py_abi_info),
+    PySlot_PTR_STATIC(Py_mod_name, "#modulename#"),
+#if defined(Py_GIL_DISABLED) || defined(Py_TARGET_ABI3T)
+    PySlot_PTR(Py_mod_gil, #gil_used#),
+#endif
+    PySlot_PTR_STATIC(Py_mod_methods, f2py_module_methods),
+    PySlot_PTR(Py_mod_exec, f2py_module_exec),
+    PySlot_END
+};
+
+
+PyMODEXPORT_FUNC PyModExport_#modulename#(void)
+{
+    return f2py_module_pyslots;
+}
+#endif
+
 #ifdef __cplusplus
 }
 #endif
@@ -1015,8 +1055,8 @@ if (#varname#_cb.capi==Py_None) {
         'frompyobj': [{hasinitvalue: '    if (#varname#_capi==Py_None) {#varname#.r = #init.r#, #varname#.i = #init.i#;} else'},
                       {l_and(isoptional, l_not(hasinitvalue))
                              : '    if (#varname#_capi != Py_None)'},
-                      '        f2py_success = #ctype#_from_pyobj(&#varname#,#varname#_capi,"#pyname#() #nth# (#varname#) can\'t be converted to #ctype#");'
-                      '\n    if (f2py_success) {'],
+                      ('        f2py_success = #ctype#_from_pyobj(&#varname#,#varname#_capi,"#pyname#() #nth# (#varname#) can\'t be converted to #ctype#");'
+                       '\n    if (f2py_success) {')],
         'cleanupfrompyobj': '    }  /*if (f2py_success) of #varname# frompyobj*/',
         'need': ['#ctype#_from_pyobj'],
         '_check': l_and(iscomplex, isintent_nothide),
@@ -1057,13 +1097,13 @@ if (#varname#_cb.capi==Py_None) {
                  {l_and(isintent_out, l_not(isintent_c)): 'STRINGPADN'}],
         '_check': isstring
     }, {  # Common
-        'frompyobj': [
+        'frompyobj': [(
             """\
     slen(#varname#) = #elsize#;
     f2py_success = #ctype#_from_pyobj(&#varname#,&slen(#varname#),#init#,"""
 """#varname#_capi,\"#ctype#_from_pyobj failed in converting #nth#"""
 """`#varname#\' of #pyname# to C #ctype#\");
-    if (f2py_success) {""",
+    if (f2py_success) {"""),
             # The trailing null value for Fortran is blank.
             {l_not(isintent_c):
              "        STRINGPADN(#varname#, slen(#varname#), '\\0', ' ');"},
@@ -1184,9 +1224,10 @@ if (#varname#_cb.capi==Py_None) {
                 """\
         int *_i,capi_i=0;
         CFUNCSMESS(\"#name#: Initializing #varname#=#init#\\n\");
-        if (initforcomb(PyArray_DIMS(capi_#varname#_as_array),
+        struct ForcombCache cache;
+        if (initforcomb(&cache, PyArray_DIMS(capi_#varname#_as_array),
                         PyArray_NDIM(capi_#varname#_as_array),1)) {
-            while ((_i = nextforcomb()))
+            while ((_i = nextforcomb(&cache)))
                 #varname#[capi_i++] = #init#; /* fortran way */
         } else {
             PyObject *exc, *val, *tb;
@@ -1199,9 +1240,20 @@ if (#varname#_cb.capi==Py_None) {
     }
     if (f2py_success) {"""]},
                       ],
+        'pyobjfrom': [
+            {l_and(isintent_inplace, l_not(isintent_out)): """\
+        f2py_success = (PyArray_ResolveWritebackIfCopy(capi_#varname#_as_array) >= 0);
+        if (f2py_success) { /* inplace array #varname# has been written back to */"""},
+            {l_and(isintent_inplace, isintent_out): """\
+        f2py_success = (PyArray_ResolveWritebackIfCopy(capi_#varname#_as_array) >= 0);
+        if (f2py_success) { /* return written-back-to inplace array #varname# */
+        Py_INCREF(#varname#_capi);
+        Py_SETREF(capi_#varname#_as_array, (PyArrayObject*)#varname#_capi);"""},
+            ],
+        'closepyobjfrom': {isintent_inplace: '    } /*if (f2py_success) of #varname# pyobjfrom*/'},
         'cleanupfrompyobj': [  # note that this list will be reversed
-            '    }  '
-            '/* if (capi_#varname#_as_array == NULL) ... else of #varname# */',
+            ('    }  '
+             '/* if (capi_#varname#_as_array == NULL) ... else of #varname# */'),
             {l_not(l_or(isintent_out, isintent_hide)): """\
     if((PyObject *)capi_#varname#_as_array!=#varname#_capi) {
         Py_XDECREF(capi_#varname#_as_array); }"""},
@@ -1430,8 +1482,7 @@ def buildmodule(m, um):
         with open(fn, 'w') as f:
             f.write('.. -*- rest -*-\n')
             f.write('\n'.join(ar['restdoc']))
-        outmess('    ReST Documentation is saved to file "%s/%smodule.rest"\n' %
-                (options['buildpath'], vrd['modulename']))
+        outmess(f'    ReST Documentation is saved to file "{fn}"\n')
     if options['dolatexdoc']:
         fn = os.path.join(
             options['buildpath'], vrd['modulename'] + 'module.tex')
@@ -1445,8 +1496,7 @@ def buildmodule(m, um):
                 f.write('\n'.join(ar['latexdoc']))
             if 'shortlatex' not in options:
                 f.write('\\end{document}')
-        outmess('    Documentation is saved to file "%s/%smodule.tex"\n' %
-                (options['buildpath'], vrd['modulename']))
+        outmess(f'    Documentation is saved to file "{fn}"\n')
     if funcwrappers:
         wn = os.path.join(options['buildpath'], vrd['f2py_wrapper_output'])
         ret['fsrc'] = wn
@@ -1462,7 +1512,7 @@ def buildmodule(m, um):
                     # don't split comment lines
                     lines.append(l + '\n')
                 elif l and l[0] == ' ':
-                    while len(l) >= 66:
+                    while len(l) > 66:
                         lines.append(l[:66] + '\n     &')
                         l = l[66:]
                     lines.append(l + '\n')
@@ -1495,7 +1545,7 @@ def buildmodule(m, um):
                     lines.append(l + '\n')
                 else:
                     lines.append(l + '\n')
-            lines = ''.join(lines).replace('\n     &\n', '\n')
+            lines = ''.join(lines).replace('&\n     &\n', '\n')
             f.write(lines)
         outmess(f'    Fortran 90 wrappers are saved to "{wn}\"\n')
     return ret
@@ -1514,8 +1564,10 @@ def buildapi(rout):
     var = rout['vars']
 
     if ismoduleroutine(rout):
-        outmess('            Constructing wrapper function "%s.%s"...\n' %
-                (rout['modulename'], rout['name']))
+        module_name = rout['modulename']
+        name = rout['name']
+        outmess('            Constructing wrapper function '
+                f'"{module_name}.{name}"...\n')
     else:
         outmess(f"        Constructing wrapper function \"{rout['name']}\"...\n")
     # Routine

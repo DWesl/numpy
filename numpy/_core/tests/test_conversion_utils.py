@@ -3,9 +3,9 @@ Tests for numpy/_core/src/multiarray/conversion_utils.c
 """
 import re
 
-import numpy._core._multiarray_tests as mt
 import pytest
 
+import numpy._core._multiarray_tests as mt
 from numpy._core.multiarray import CLIP, RAISE, WRAP
 from numpy.testing import assert_raises
 
@@ -161,6 +161,12 @@ class TestClipmodeConverter(StringConverterTestCase):
         assert self.conv(WRAP) == 'NPY_WRAP'
         assert self.conv(RAISE) == 'NPY_RAISE'
 
+    def test_invalid(self):
+        with pytest.raises(ValueError):
+            self.conv('invalid')
+        with pytest.raises(ValueError):
+            self.conv(99)
+
 
 class TestCastingConverter(StringConverterTestCase):
     """ Tests of PyArray_CastingConverter """
@@ -172,9 +178,12 @@ class TestCastingConverter(StringConverterTestCase):
         self._check("no", "NPY_NO_CASTING")
         self._check("equiv", "NPY_EQUIV_CASTING")
         self._check("safe", "NPY_SAFE_CASTING")
-        self._check("same_kind", "NPY_SAME_KIND_CASTING")
         self._check("unsafe", "NPY_UNSAFE_CASTING")
+        self._check("same_kind", "NPY_SAME_KIND_CASTING")
 
+    def test_invalid(self):
+        # Currently, 'same_value' is supported only in ndarray.astype
+        self._check_value_error("same_value")
 
 class TestIntpConverter:
     """ Tests of PyArray_IntpConverter """

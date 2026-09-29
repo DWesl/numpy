@@ -14,14 +14,12 @@ match exactly, and could be adjusted):
 import threading
 
 import pytest
-from numpy._core._multiarray_tests import (
-    argparse_example_function as func,
-)
-from numpy._core._multiarray_tests import (
-    threaded_argparse_example_function as thread_func,
-)
 
 import numpy as np
+from numpy._core._multiarray_tests import (
+    argparse_example_function as func,
+    threaded_argparse_example_function as thread_func,
+)
 from numpy.testing import IS_WASM
 
 
@@ -40,7 +38,7 @@ def test_thread_safe_argparse_cache():
 
 def test_invalid_integers():
     with pytest.raises(TypeError,
-            match="integer argument expected, got float"):
+            match="cannot be interpreted as an integer"):
         func(1.)
     with pytest.raises(OverflowError):
         func(2**100)

@@ -5,9 +5,7 @@ import functools
 import itertools
 import operator
 
-from . import fromnumeric as _from_nx
-from . import numeric as _nx
-from . import overrides
+from . import fromnumeric as _from_nx, numeric as _nx, overrides
 from .multiarray import array, asanyarray, normalize_axis_index
 
 array_function_dispatch = functools.partial(
@@ -240,8 +238,7 @@ def vstack(tup, *, dtype=None, casting="same_kind"):
         each element along the zeroth axis is treated as a separate array.
 
     dtype : str or dtype
-        If provided, the destination array will have this dtype. Cannot be
-        provided together with `out`.
+        If provided, the destination array will have this dtype.
 
         .. versionadded:: 1.24
 
@@ -315,8 +312,7 @@ def hstack(tup, *, dtype=None, casting="same_kind"):
         each element along the zeroth axis is treated as a separate array.
 
     dtype : str or dtype
-        If provided, the destination array will have this dtype. Cannot be
-        provided together with `out`.
+        If provided, the destination array will have this dtype.
 
         .. versionadded:: 1.24
 

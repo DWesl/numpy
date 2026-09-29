@@ -37,6 +37,7 @@
 #include "dtype_traversal.h"
 #include "arrayobject.h"
 #include "npy_static_data.h"
+#include "module_state.h"
 #include "multiarraymodule.h"
 
 /*
@@ -232,6 +233,7 @@ PyArray_GetBoundCastingImpl(PyArray_DTypeMeta *from, PyArray_DTypeMeta *to)
     res->dtypes = PyMem_Malloc(2 * sizeof(PyArray_DTypeMeta *));
     if (res->dtypes == NULL) {
         Py_DECREF(res);
+        PyErr_NoMemory();
         return NULL;
     }
     Py_INCREF(from);
@@ -255,11 +257,88 @@ _get_castingimpl(PyObject *NPY_UNUSED(module), PyObject *args)
 }
 
 
+NPY_NO_EXPORT PyObject *
+_get_all_cast_information(PyObject *NPY_UNUSED(module),
+                          PyObject *NPY_UNUSED(args))
+{
+    PyObject *result = PyList_New(0);
+    if (result == NULL) {
+        return NULL;
+    }
+    PyObject *classes = PyObject_CallMethod(
+            (PyObject *)&PyArrayDescr_Type, "__subclasses__", "");
+    if (classes == NULL) {
+        goto fail;
+    }
+    Py_SETREF(classes, PySequence_Fast(classes, NULL)); // noqa: borrowed-ref OK
+    if (classes == NULL) {
+        goto fail;
+    }
+
+    Py_ssize_t nclass = PySequence_Length(classes);
+    for (Py_ssize_t  i = 0; i < nclass; i++) {
+        PyArray_DTypeMeta *from_dtype = (
+                (PyArray_DTypeMeta *)PySequence_Fast_GET_ITEM(classes, i));
+        if (NPY_DT_is_abstract(from_dtype)) {
+            /*
+             * TODO: In principle probably needs to recursively check this,
+             *       also we may allow casts to abstract dtypes at some point.
+             */
+            continue;
+        }
+
+        PyObject *to_dtype, *cast_obj;
+        Py_ssize_t pos = 0;
+
+        while (PyDict_Next(NPY_DT_SLOTS(from_dtype)->castingimpls, // noqa: borrowed-ref OK
+                           &pos, &to_dtype, &cast_obj)) {
+            if (cast_obj == Py_None) {
+                continue;
+            }
+            PyArrayMethodObject *cast = (PyArrayMethodObject *)cast_obj;
+
+            /* Pass some information about this cast out! */
+            PyObject *cast_info = Py_BuildValue("{sOsOsisisisisiss}",
+                    "from", from_dtype,
+                    "to", to_dtype,
+                    "legacy", (cast->name != NULL &&
+                               strncmp(cast->name, "legacy_", 7) == 0),
+                    "casting", cast->casting,
+                    "requires_pyapi", cast->flags & NPY_METH_REQUIRES_PYAPI,
+                    "supports_unaligned",
+                        cast->flags & NPY_METH_SUPPORTS_UNALIGNED,
+                    "no_floatingpoint_errors",
+                        cast->flags & NPY_METH_NO_FLOATINGPOINT_ERRORS,
+                    "name", cast->name);
+            if (cast_info == NULL) {
+                goto fail;
+            }
+            int res = PyList_Append(result, cast_info);
+            Py_DECREF(cast_info);
+            if (res < 0) {
+                goto fail;
+            }
+        }
+    }
+    Py_DECREF(classes);
+    return result;
+
+  fail:
+    Py_XDECREF(classes);
+    Py_XDECREF(result);
+    return NULL;
+}
+
+
 /**
  * Find the minimal cast safety level given two cast-levels as input.
  * Supports the NPY_CAST_IS_VIEW check, and should be preferred to allow
  * extending cast-levels if necessary.
  * It is not valid for one of the arguments to be -1 to indicate an error.
+ * Pass through NPY_SAME_VALUE_CASTING_FLAG on casting1, unless both have the
+ * flag, in which case return max_casting | NPY_SAME_VALUE_CASTING_FLAG.
+ * Usually this will be exactly NPY_SAME_VALUE_CASTING, but the logic here
+ * should handle other 'casting with same_value' options
  *
  * @param casting1 First (left-hand) casting level to compare
  * @param casting2 Second (right-hand) casting level to compare
@@ -271,11 +350,14 @@ PyArray_MinCastSafety(NPY_CASTING casting1, NPY_CASTING casting2)
     if (casting1 < 0 || casting2 < 0) {
         return -1;
     }
+    int both_same_casting = casting1 & casting2 & NPY_SAME_VALUE_CASTING_FLAG;
+    casting1 &= ~NPY_SAME_VALUE_CASTING_FLAG;
+    casting2 &= ~NPY_SAME_VALUE_CASTING_FLAG;
     /* larger casting values are less safe */
     if (casting1 > casting2) {
-        return casting1;
+        return casting1 | both_same_casting;
     }
-    return casting2;
+    return casting2 | both_same_casting;
 }
 
 
@@ -344,7 +426,7 @@ PyArray_GetCastFunc(PyArray_Descr *descr, int type_num)
             PyObject *cobj;
 
             key = PyLong_FromLong(type_num);
-            cobj = PyDict_GetItem(obj, key);
+            cobj = PyDict_GetItem(obj, key); // noqa: borrowed-ref OK
             Py_DECREF(key);
             if (cobj && PyCapsule_CheckExact(cobj)) {
                 castfunc = PyCapsule_GetPointer(cobj, NULL);
@@ -358,7 +440,7 @@ PyArray_GetCastFunc(PyArray_Descr *descr, int type_num)
             !PyTypeNum_ISCOMPLEX(type_num) &&
             PyTypeNum_ISNUMBER(type_num) &&
             !PyTypeNum_ISBOOL(type_num)) {
-        int ret = PyErr_WarnEx(npy_static_pydata.ComplexWarning,
+        int ret = PyErr_WarnEx(_npy_module_state->static_pydata.ComplexWarning,
                 "Casting complex values to real discards "
                 "the imaginary part", 1);
         if (ret < 0) {
@@ -640,6 +722,36 @@ PyArray_SafeCast(PyArray_Descr *type1, PyArray_Descr *type2,
 }
 
 
+/*
+ * Python-level helper answering whether reinterpreting data of dtype *from*
+ * as dtype *to* is a view. Unlike descriptor equality or `np.can_cast` with
+ * "no" casting, this distinguishes equivalent descriptor instances with
+ * separate internal state (e.g. StringDType allocators).
+ */
+NPY_NO_EXPORT PyObject *
+_is_view_safe_cast(PyObject *NPY_UNUSED(module), PyObject *const *args,
+                   Py_ssize_t len_args)
+{
+    if (len_args != 2) {
+        PyErr_SetString(PyExc_TypeError,
+                "_is_view_safe_cast() takes exactly two arguments");
+        return NULL;
+    }
+    if (!PyArray_DescrCheck(args[0]) || !PyArray_DescrCheck(args[1])) {
+        PyErr_SetString(PyExc_TypeError,
+                "_is_view_safe_cast() arguments must be dtype instances");
+        return NULL;
+    }
+    PyArray_Descr *from = (PyArray_Descr *)args[0];
+    PyArray_Descr *to = (PyArray_Descr *)args[1];
+    npy_intp view_offset = NPY_MIN_INTP;
+    /* ignore_error=1: dtype pairs with no resolvable cast are simply not views */
+    npy_intp is_safe = PyArray_SafeCast(from, to, &view_offset,
+                                        NPY_NO_CASTING, 1);
+    return PyBool_FromLong(is_safe && view_offset == 0);
+}
+
+
 /* Provides an ordering for the dtype 'kind' character codes */
 NPY_NO_EXPORT int
 dtype_kind_to_ordering(char kind)
@@ -662,7 +774,6 @@ dtype_kind_to_ordering(char kind)
             return 5;
         /* String kind */
         case 'S':
-        case 'a':
             return 6;
         /* Unicode kind */
         case 'U':
@@ -746,13 +857,13 @@ can_cast_pyscalar_scalar_to(
     }
     else if (PyDataType_ISFLOAT(to)) {
         if (flags & NPY_ARRAY_WAS_PYTHON_COMPLEX) {
-            return casting == NPY_UNSAFE_CASTING;
+            return ((casting == NPY_UNSAFE_CASTING) || ((casting & NPY_SAME_VALUE_CASTING_FLAG) > 0));
         }
         return 1;
     }
     else if (PyDataType_ISINTEGER(to)) {
         if (!(flags & NPY_ARRAY_WAS_PYTHON_INT)) {
-            return casting == NPY_UNSAFE_CASTING;
+            return ((casting == NPY_UNSAFE_CASTING) || ((casting & NPY_SAME_VALUE_CASTING_FLAG) > 0));
         }
         return 1;
     }
@@ -828,7 +939,7 @@ PyArray_CanCastArrayTo(PyArrayObject *arr, PyArray_Descr *to,
 NPY_NO_EXPORT const char *
 npy_casting_to_string(NPY_CASTING casting)
 {
-    switch (casting) {
+    switch ((int)casting) {
         case NPY_NO_CASTING:
             return "'no'";
         case NPY_EQUIV_CASTING:
@@ -839,6 +950,16 @@ npy_casting_to_string(NPY_CASTING casting)
             return "'same_kind'";
         case NPY_UNSAFE_CASTING:
             return "'unsafe'";
+        case NPY_NO_CASTING | NPY_SAME_VALUE_CASTING_FLAG:
+            return "'no and same_value'";
+        case NPY_EQUIV_CASTING | NPY_SAME_VALUE_CASTING_FLAG:
+            return "'equiv and same_value'";
+        case NPY_SAFE_CASTING | NPY_SAME_VALUE_CASTING_FLAG:
+            return "'safe and same_value'";
+        case NPY_SAME_KIND_CASTING | NPY_SAME_VALUE_CASTING_FLAG:
+            return "'same_kind and same_value'";
+        case NPY_UNSAFE_CASTING | NPY_SAME_VALUE_CASTING_FLAG:
+            return "'same_value'";
         default:
             return "<unknown>";
     }
@@ -914,7 +1035,7 @@ PyArray_CastDescrToDType(PyArray_Descr *descr, PyArray_DTypeMeta *given_DType)
         Py_INCREF(descr);
         return descr;
     }
-    if (!NPY_DT_is_parametric(given_DType)) {
+    if (!NPY_DT_is_parametric(given_DType) && !NPY_DT_is_abstract(given_DType)) {
         /*
          * Don't actually do anything, the default is always the result
          * of any cast.
@@ -977,10 +1098,8 @@ PyArray_FindConcatenationDescriptor(
 
     PyArray_DTypeMeta *common_dtype;
     PyArray_Descr *result = NULL;
-    if (PyArray_ExtractDTypeAndDescriptor(
-            requested_dtype, &result, &common_dtype) < 0) {
-        return NULL;
-    }
+    PyArray_ExtractDTypeAndDescriptor(
+            requested_dtype, &result, &common_dtype);
     if (result != NULL) {
         if (PyDataType_SUBARRAY(result) != NULL) {
             PyErr_Format(PyExc_TypeError,
@@ -1784,6 +1903,7 @@ _check_object_rec(PyArray_Descr *descr)
 NPY_NO_EXPORT char *
 PyArray_Zero(PyArrayObject *arr)
 {
+    multiarray_umath_state *state = _npy_module_state;
     char *zeroval;
     int ret, storeflags;
 
@@ -1800,15 +1920,15 @@ PyArray_Zero(PyArrayObject *arr)
         /* XXX this is dangerous, the caller probably is not
            aware that zeroval is actually a static PyObject*
            In the best case they will only use it as-is, but
-           if they simply memcpy it into a ndarray without using
+           if they simply memcpy it into an ndarray without using
            setitem(), refcount errors will occur
         */
-        memcpy(zeroval, &npy_static_pydata.zero_obj, sizeof(PyObject *));
+        memcpy(zeroval, &state->static_pydata.zero_obj, sizeof(PyObject *));
         return zeroval;
     }
     storeflags = PyArray_FLAGS(arr);
     PyArray_ENABLEFLAGS(arr, NPY_ARRAY_BEHAVED);
-    ret = PyArray_SETITEM(arr, zeroval, npy_static_pydata.zero_obj);
+    ret = PyArray_SETITEM(arr, zeroval, state->static_pydata.zero_obj);
     ((PyArrayObject_fields *)arr)->flags = storeflags;
     if (ret < 0) {
         PyDataMem_FREE(zeroval);
@@ -1823,6 +1943,7 @@ PyArray_Zero(PyArrayObject *arr)
 NPY_NO_EXPORT char *
 PyArray_One(PyArrayObject *arr)
 {
+    multiarray_umath_state *state = _npy_module_state;
     char *oneval;
     int ret, storeflags;
 
@@ -1839,16 +1960,16 @@ PyArray_One(PyArrayObject *arr)
         /* XXX this is dangerous, the caller probably is not
            aware that oneval is actually a static PyObject*
            In the best case they will only use it as-is, but
-           if they simply memcpy it into a ndarray without using
+           if they simply memcpy it into an ndarray without using
            setitem(), refcount errors will occur
         */
-        memcpy(oneval, &npy_static_pydata.one_obj, sizeof(PyObject *));
+        memcpy(oneval, &state->static_pydata.one_obj, sizeof(PyObject *));
         return oneval;
     }
 
     storeflags = PyArray_FLAGS(arr);
     PyArray_ENABLEFLAGS(arr, NPY_ARRAY_BEHAVED);
-    ret = PyArray_SETITEM(arr, oneval, npy_static_pydata.one_obj);
+    ret = PyArray_SETITEM(arr, oneval, state->static_pydata.one_obj);
     ((PyArrayObject_fields *)arr)->flags = storeflags;
     if (ret < 0) {
         PyDataMem_FREE(oneval);
@@ -1921,14 +2042,21 @@ PyArray_ConvertToCommonType(PyObject *op, int *retn)
     PyArray_Descr *common_descr = NULL;
     PyArrayObject **mps = NULL;
 
-    *retn = n = PySequence_Length(op);
-    if (n == 0) {
+    Py_ssize_t length = PySequence_Length(op);
+    if (length == 0) {
         PyErr_SetString(PyExc_ValueError, "0-length sequence.");
     }
     if (PyErr_Occurred()) {
         *retn = 0;
         return NULL;
     }
+    if (length > INT_MAX) {
+        PyErr_SetString(PyExc_ValueError,
+            "sequence too large to convert in common type.");
+        *retn = 0;
+        return NULL;
+    }
+    *retn = n = (int)length;
     mps = (PyArrayObject **)PyDataMem_NEW(n*sizeof(PyArrayObject *));
     if (mps == NULL) {
         *retn = 0;
@@ -1967,6 +2095,7 @@ PyArray_ConvertToCommonType(PyObject *op, int *retn)
             goto fail;
         }
         npy_mark_tmp_array_if_pyscalar(tmp, mps[i], NULL);
+        npy_mark_tmp_array_if_pystr(tmp, mps[i]);
         Py_DECREF(tmp);
     }
 
@@ -1978,8 +2107,13 @@ PyArray_ConvertToCommonType(PyObject *op, int *retn)
     /* Make sure all arrays are contiguous and have the correct dtype. */
     for (i = 0; i < n; i++) {
         int flags = NPY_ARRAY_CARRAY;
-        PyArrayObject *tmp = mps[i];
 
+        if (npy_update_operand_if_pyscalar(&mps[i], op, i, common_descr,
+                                           NPY_SAFE_CASTING) < 0) {
+            goto fail;
+        }
+
+        PyArrayObject *tmp = mps[i];
         Py_INCREF(common_descr);
         mps[i] = (PyArrayObject *)PyArray_FromArray(tmp, common_descr, flags);
         Py_DECREF(tmp);
@@ -2074,6 +2208,7 @@ PyArray_AddCastingImplementation_FromSpec(PyArrayMethod_Spec *spec, int private)
     if (meth == NULL) {
         return -1;
     }
+    meth->method->flags |= _NPY_METH_IS_CAST;
     int res = PyArray_AddCastingImplementation(meth);
     Py_DECREF(meth);
     if (res < 0) {
@@ -2116,9 +2251,9 @@ legacy_same_dtype_resolve_descriptors(
     if (PyDataType_ISNOTSWAPPED(loop_descrs[0]) ==
                 PyDataType_ISNOTSWAPPED(loop_descrs[1])) {
         *view_offset = 0;
-        return NPY_NO_CASTING;
+        return NPY_NO_CASTING | NPY_SAME_VALUE_CASTING_FLAG;
     }
-    return NPY_EQUIV_CASTING;
+    return NPY_EQUIV_CASTING | NPY_SAME_VALUE_CASTING_FLAG;
 }
 
 
@@ -2236,7 +2371,7 @@ complex_to_noncomplex_get_loop(
         PyArrayMethod_StridedLoop **out_loop, NpyAuxData **out_transferdata,
         NPY_ARRAYMETHOD_FLAGS *flags)
 {
-    int ret = PyErr_WarnEx(npy_static_pydata.ComplexWarning,
+    int ret = PyErr_WarnEx(_npy_module_state->static_pydata.ComplexWarning,
             "Casting complex values to real discards "
             "the imaginary part", 1);
     if (ret < 0) {
@@ -2305,6 +2440,7 @@ add_numeric_cast(PyArray_DTypeMeta *from, PyArray_DTypeMeta *to)
     if (dtypes[0]->singleton->kind == dtypes[1]->singleton->kind
             && from_itemsize == to_itemsize) {
         spec.casting = NPY_EQUIV_CASTING;
+        spec.casting |= NPY_SAME_VALUE_CASTING_FLAG;
 
         /* When there is no casting (equivalent C-types) use byteswap loops */
         slots[0].slot = NPY_METH_resolve_descriptors;
@@ -2319,13 +2455,17 @@ add_numeric_cast(PyArray_DTypeMeta *from, PyArray_DTypeMeta *to)
     }
     else if (_npy_can_cast_safely_table[from->type_num][to->type_num]) {
         spec.casting = NPY_SAFE_CASTING;
-    }
-    else if (dtype_kind_to_ordering(dtypes[0]->singleton->kind) <=
-             dtype_kind_to_ordering(dtypes[1]->singleton->kind)) {
-        spec.casting = NPY_SAME_KIND_CASTING;
+        spec.casting |= NPY_SAME_VALUE_CASTING_FLAG;
     }
     else {
-        spec.casting = NPY_UNSAFE_CASTING;
+        if (dtype_kind_to_ordering(dtypes[0]->singleton->kind) <=
+                dtype_kind_to_ordering(dtypes[1]->singleton->kind)) {
+            spec.casting = NPY_SAME_KIND_CASTING;
+        }
+        else {
+            spec.casting = NPY_UNSAFE_CASTING;
+        }
+        spec.casting |= NPY_SAME_VALUE_CASTING_FLAG;
     }
 
     /* Create a bound method, unbind and store it */
@@ -2463,10 +2603,10 @@ cast_to_string_resolve_descriptors(
         return -1;
     }
 
-    if (self->casting == NPY_UNSAFE_CASTING) {
+    if ((self->casting == NPY_UNSAFE_CASTING) || ((self->casting & NPY_SAME_VALUE_CASTING_FLAG) > 0)){
         assert(dtypes[0]->type_num == NPY_UNICODE &&
                dtypes[1]->type_num == NPY_STRING);
-        return NPY_UNSAFE_CASTING;
+        return self->casting;
     }
 
     if (loop_descrs[1]->elsize >= size) {
@@ -2749,7 +2889,7 @@ nonstructured_to_structured_resolve_descriptors(
 
             Py_ssize_t pos = 0;
             PyObject *key, *tuple;
-            while (PyDict_Next(to_descr->fields, &pos, &key, &tuple)) {
+            while (PyDict_Next(to_descr->fields, &pos, &key, &tuple)) { // noqa: borrowed-ref OK
                 PyArray_Descr *field_descr = (PyArray_Descr *)PyTuple_GET_ITEM(tuple, 0);
                 npy_intp field_view_off = NPY_MIN_INTP;
                 NPY_CASTING field_casting = PyArray_GetCastInfo(
@@ -2868,8 +3008,9 @@ nonstructured_to_structured_get_loop(
 static PyObject *
 PyArray_GetGenericToVoidCastingImpl(void)
 {
-    Py_INCREF(npy_static_pydata.GenericToVoidMethod);
-    return npy_static_pydata.GenericToVoidMethod;
+    multiarray_umath_state *state = _npy_module_state;
+    Py_INCREF(state->static_pydata.GenericToVoidMethod);
+    return state->static_pydata.GenericToVoidMethod;
 }
 
 
@@ -2898,7 +3039,7 @@ structured_to_nonstructured_resolve_descriptors(
             return -1;
         }
         PyObject *key = PyTuple_GetItem(PyDataType_NAMES(given_descrs[0]), 0);
-        PyObject *base_tup = PyDict_GetItem(PyDataType_FIELDS(given_descrs[0]), key);
+        PyObject *base_tup = PyDict_GetItem(PyDataType_FIELDS(given_descrs[0]), key); // noqa: borrowed-ref OK
         base_descr = (PyArray_Descr *)PyTuple_GET_ITEM(base_tup, 0);
         struct_view_offset = PyLong_AsSsize_t(PyTuple_GET_ITEM(base_tup, 1));
         if (error_converting(struct_view_offset)) {
@@ -2930,20 +3071,16 @@ structured_to_nonstructured_resolve_descriptors(
 
     /* Void dtypes always do the full cast. */
     if (given_descrs[1] == NULL) {
+        /*
+         * Reject string casts, historically these worked only for empty arrays.
+         * (One could go via object and hex printing, but...)
+         */
+        if (dtypes[1]->type_num == NPY_STRING || dtypes[1]->type_num == NPY_UNICODE) {
+            return -1;
+        }
         loop_descrs[1] = NPY_DT_CALL_default_descr(dtypes[1]);
         if (loop_descrs[1] == NULL) {
             return -1;
-        }
-        /*
-         * Special case strings here, it should be useless (and only actually
-         * work for empty arrays).  Possibly this should simply raise for
-         * all parametric DTypes.
-         */
-        if (dtypes[1]->type_num == NPY_STRING) {
-            loop_descrs[1]->elsize = given_descrs[0]->elsize;
-        }
-        else if (dtypes[1]->type_num == NPY_UNICODE) {
-            loop_descrs[1]->elsize = given_descrs[0]->elsize * 4;
         }
     }
     else {
@@ -3006,8 +3143,9 @@ structured_to_nonstructured_get_loop(
 static PyObject *
 PyArray_GetVoidToGenericCastingImpl(void)
 {
-    Py_INCREF(npy_static_pydata.VoidToGenericMethod);
-    return npy_static_pydata.VoidToGenericMethod;
+    multiarray_umath_state *state = _npy_module_state;
+    Py_INCREF(state->static_pydata.VoidToGenericMethod);
+    return state->static_pydata.VoidToGenericMethod;
 }
 
 
@@ -3033,7 +3171,7 @@ can_cast_fields_safety(
     for (Py_ssize_t i = 0; i < field_count; i++) {
         npy_intp field_view_off = NPY_MIN_INTP;
         PyObject *from_key = PyTuple_GET_ITEM(PyDataType_NAMES(from), i);
-        PyObject *from_tup = PyDict_GetItemWithError(PyDataType_FIELDS(from), from_key);
+        PyObject *from_tup = PyDict_GetItemWithError(PyDataType_FIELDS(from), from_key); // noqa: borrowed-ref OK
         if (from_tup == NULL) {
             return give_bad_field_error(from_key);
         }
@@ -3041,7 +3179,7 @@ can_cast_fields_safety(
 
         /* Check whether the field names match */
         PyObject *to_key = PyTuple_GET_ITEM(PyDataType_NAMES(to), i);
-        PyObject *to_tup = PyDict_GetItem(PyDataType_FIELDS(to), to_key);
+        PyObject *to_tup = PyDict_GetItem(PyDataType_FIELDS(to), to_key); // noqa: borrowed-ref OK
         if (to_tup == NULL) {
             return give_bad_field_error(from_key);
         }
@@ -3253,7 +3391,22 @@ void_to_void_get_loop(
 {
     if (PyDataType_NAMES(context->descriptors[0]) != NULL ||
             PyDataType_NAMES(context->descriptors[1]) != NULL) {
-        if (get_fields_transfer_function(
+        /*
+         * Fast path: if dtypes are equivalent and the destination is
+         * trivially copyable, use memcpy instead of field-by-field transfer.
+         */
+        if ((context->descriptors[0] == context->descriptors[1] ||
+                    PyArray_EquivTypes(context->descriptors[0], context->descriptors[1])) &&
+                PyDataType_ISTRIVIALLYCOPYABLE(context->descriptors[1])) {
+            if (PyArray_GetStridedZeroPadCopyFn(
+                    0, 0, strides[0], strides[1],
+                    context->descriptors[0]->elsize, context->descriptors[1]->elsize,
+                    out_loop, out_transferdata) == NPY_FAIL) {
+                return -1;
+            }
+            *flags = PyArrayMethod_MINIMAL_FLAGS;
+        }
+        else if (get_fields_transfer_function(
                 aligned, strides[0], strides[1],
                 context->descriptors[0], context->descriptors[1],
                 move_references, out_loop, out_transferdata,
@@ -3371,8 +3524,9 @@ object_to_any_resolve_descriptors(
 static PyObject *
 PyArray_GetObjectToGenericCastingImpl(void)
 {
-    Py_INCREF(npy_static_pydata.ObjectToGenericMethod);
-    return npy_static_pydata.ObjectToGenericMethod;
+    multiarray_umath_state *state = _npy_module_state;
+    Py_INCREF(state->static_pydata.ObjectToGenericMethod);
+    return state->static_pydata.ObjectToGenericMethod;
 }
 
 
@@ -3408,8 +3562,9 @@ any_to_object_resolve_descriptors(
 static PyObject *
 PyArray_GetGenericToObjectCastingImpl(void)
 {
-    Py_INCREF(npy_static_pydata.GenericToObjectMethod);
-    return npy_static_pydata.GenericToObjectMethod;
+    multiarray_umath_state *state = _npy_module_state;
+    Py_INCREF(state->static_pydata.GenericToObjectMethod);
+    return state->static_pydata.GenericToObjectMethod;
 }
 
 
@@ -3463,6 +3618,7 @@ PyArray_InitializeObjectToObjectCast(void)
 
 static int
 initialize_void_and_object_globals(void) {
+    multiarray_umath_state *state = _npy_module_state;
     PyArrayMethodObject *method = PyObject_New(PyArrayMethodObject, &PyArrayMethod_Type);
     if (method == NULL) {
         PyErr_NoMemory();
@@ -3476,7 +3632,7 @@ initialize_void_and_object_globals(void) {
     method->get_strided_loop = &structured_to_nonstructured_get_loop;
     method->nin = 1;
     method->nout = 1;
-    npy_static_pydata.VoidToGenericMethod = (PyObject *)method;
+    state->static_pydata.VoidToGenericMethod = (PyObject *)method;
 
     method = PyObject_New(PyArrayMethodObject, &PyArrayMethod_Type);
     if (method == NULL) {
@@ -3491,7 +3647,7 @@ initialize_void_and_object_globals(void) {
     method->get_strided_loop = &nonstructured_to_structured_get_loop;
     method->nin = 1;
     method->nout = 1;
-    npy_static_pydata.GenericToVoidMethod = (PyObject *)method;
+    state->static_pydata.GenericToVoidMethod = (PyObject *)method;
 
     method = PyObject_New(PyArrayMethodObject, &PyArrayMethod_Type);
     if (method == NULL) {
@@ -3508,7 +3664,7 @@ initialize_void_and_object_globals(void) {
     method->casting = NPY_UNSAFE_CASTING;
     method->resolve_descriptors = &object_to_any_resolve_descriptors;
     method->get_strided_loop = &object_to_any_get_loop;
-    npy_static_pydata.ObjectToGenericMethod = (PyObject *)method;
+    state->static_pydata.ObjectToGenericMethod = (PyObject *)method;
 
     method = PyObject_New(PyArrayMethodObject, &PyArrayMethod_Type);
     if (method == NULL) {
@@ -3525,7 +3681,7 @@ initialize_void_and_object_globals(void) {
     method->casting = NPY_SAFE_CASTING;
     method->resolve_descriptors = &any_to_object_resolve_descriptors;
     method->get_strided_loop = &any_to_object_get_loop;
-    npy_static_pydata.GenericToObjectMethod = (PyObject *)method;
+    state->static_pydata.GenericToObjectMethod = (PyObject *)method;
 
     return 0;
 }

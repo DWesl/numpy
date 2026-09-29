@@ -19,6 +19,7 @@
 #include "alloc.h"
 #include "npy_buffer.h"
 #include "npy_static_data.h"
+#include "module_state.h"
 #include "multiarraymodule.h"
 
 static int
@@ -130,7 +131,7 @@ PyArray_IntpConverter(PyObject *obj, PyArray_Dims *seq)
      * dimension_from_scalar as soon as possible.
      */
     if (!PyLong_CheckExact(obj) && PySequence_Check(obj)) {
-        seq_obj = PySequence_Fast(obj,
+        seq_obj = PySequence_Fast(obj, // noqa: borrowed-ref - manual fix needed
                "expected a sequence of integers or a single integer.");
         if (seq_obj == NULL) {
             /* continue attempting to parse as a single integer. */
@@ -227,8 +228,11 @@ PyArray_CopyConverter(PyObject *obj, NPY_COPYMODE *copymode) {
 
     int int_copymode;
 
-    if ((PyObject *)Py_TYPE(obj) == npy_static_pydata._CopyMode) {
-        PyObject* mode_value = PyObject_GetAttrString(obj, "value");
+    multiarray_umath_state *state = _npy_module_state;
+
+    if ((PyObject *)Py_TYPE(obj) == state->static_pydata._CopyMode) {
+        PyObject* mode_value = PyObject_GetAttr(obj,
+                state->interned_str.value);
         if (mode_value == NULL) {
             return NPY_FAIL;
         }
@@ -262,7 +266,7 @@ PyArray_AsTypeCopyConverter(PyObject *obj, NPY_ASTYPECOPYMODE *copymode)
 {
     int int_copymode;
 
-    if ((PyObject *)Py_TYPE(obj) == npy_static_pydata._CopyMode) {
+    if ((PyObject *)Py_TYPE(obj) == _npy_module_state->static_pydata._CopyMode) {
         PyErr_SetString(PyExc_ValueError,
                         "_CopyMode enum is not allowed for astype function. "
                         "Use true/false instead.");
@@ -438,15 +442,11 @@ PyArray_ConvertMultiAxis(PyObject *axis_in, int ndim, npy_bool *out_axis_flags)
 NPY_NO_EXPORT int
 PyArray_BoolConverter(PyObject *object, npy_bool *val)
 {
-    if (PyObject_IsTrue(object)) {
-        *val = NPY_TRUE;
-    }
-    else {
-        *val = NPY_FALSE;
-    }
-    if (PyErr_Occurred()) {
+    int bool_val = PyObject_IsTrue(object);
+    if (bool_val == -1) {
         return NPY_FAIL;
     }
+    *val = (npy_bool)bool_val;
     return NPY_SUCCEED;
 }
 
@@ -460,15 +460,11 @@ PyArray_OptionalBoolConverter(PyObject *object, int *val)
     if (object == Py_None) {
         return NPY_SUCCEED;
     }
-    if (PyObject_IsTrue(object)) {
-        *val = 1;
-    }
-    else {
-        *val = 0;
-    }
-    if (PyErr_Occurred()) {
+    int bool_val = PyObject_IsTrue(object);
+    if (bool_val == -1) {
         return NPY_FAIL;
     }
+    *val = (npy_bool)bool_val;
     return NPY_SUCCEED;
 }
 
@@ -642,6 +638,10 @@ static int selectkind_parser(char const *str, Py_ssize_t length, void *data)
 NPY_NO_EXPORT int
 PyArray_SelectkindConverter(PyObject *obj, NPY_SELECTKIND *selectkind)
 {
+    /* Leave the desired default from the caller for Py_None */
+    if (obj == Py_None) {
+        return NPY_SUCCEED;
+    }
     return string_converter_helper(
         obj, (void *)selectkind, selectkind_parser, "select kind",
         "must be 'introselect'");
@@ -797,6 +797,7 @@ PyArray_ClipmodeConverter(PyObject *object, NPY_CLIPMODE *val)
             PyErr_Format(PyExc_ValueError,
                     "integer clipmode must be RAISE, WRAP, or CLIP "
                     "from 'numpy._core.multiarray'");
+            return NPY_FAIL;
         }
     }
     return NPY_SUCCEED;
@@ -919,7 +920,7 @@ PyArray_CorrelatemodeConverter(PyObject *object, NPY_CORRELATEMODE *val)
     }
 }
 
-static int casting_parser(char const *str, Py_ssize_t length, void *data)
+static int casting_parser_full(char const *str, Py_ssize_t length, void *data, int can_use_same_value)
 {
     NPY_CASTING *casting = (NPY_CASTING *)data;
     if (length < 2) {
@@ -949,6 +950,10 @@ static int casting_parser(char const *str, Py_ssize_t length, void *data)
             *casting = NPY_SAME_KIND_CASTING;
             return 0;
         }
+        if (can_use_same_value && length == 10 && strcmp(str, "same_value") == 0) {
+            *casting = NPY_SAME_VALUE_CASTING;
+            return 0;
+        }
         break;
     case 's':
         if (length == 6 && strcmp(str, "unsafe") == 0) {
@@ -960,6 +965,11 @@ static int casting_parser(char const *str, Py_ssize_t length, void *data)
     return -1;
 }
 
+static int casting_parser(char const *str, Py_ssize_t length, void *data)
+{
+  return casting_parser_full(str, length, data, 0);
+}
+
 /*NUMPY_API
  * Convert any Python object, *obj*, to an NPY_CASTING enum.
  */
@@ -969,9 +979,25 @@ PyArray_CastingConverter(PyObject *obj, NPY_CASTING *casting)
     return string_converter_helper(
         obj, (void *)casting, casting_parser, "casting",
             "must be one of 'no', 'equiv', 'safe', "
-            "'same_kind', or 'unsafe'");
+            "'same_kind', 'unsafe'");
     return 0;
 }
+
+static int casting_parser_same_value(char const *str, Py_ssize_t length, void *data)
+{
+  return casting_parser_full(str, length, data, 1);
+}
+
+NPY_NO_EXPORT int
+PyArray_CastingConverterSameValue(PyObject *obj, NPY_CASTING *casting)
+{
+    return string_converter_helper(
+        obj, (void *)casting, casting_parser_same_value, "casting",
+            "must be one of 'no', 'equiv', 'safe', "
+            "'same_kind', 'unsafe', 'same_value'");
+    return 0;
+}
+
 
 /*****************************
 * Other conversion functions
@@ -1143,7 +1169,7 @@ PyArray_IntpFromSequence(PyObject *seq, npy_intp *vals, int maxvals)
 {
     PyObject *seq_obj = NULL;
     if (!PyLong_CheckExact(seq) && PySequence_Check(seq)) {
-        seq_obj = PySequence_Fast(seq,
+        seq_obj = PySequence_Fast(seq, // noqa: borrowed-ref - manual fix needed
             "expected a sequence of integers or a single integer");
         if (seq_obj == NULL) {
             /* continue attempting to parse as a single integer. */
@@ -1315,20 +1341,6 @@ PyArray_TypestrConvert(int itemsize, int gentype)
             newtype = NPY_STRING;
             break;
 
-        case NPY_DEPRECATED_STRINGLTR2:
-        {
-            /*
-             * raise a deprecation warning, which might be an exception
-             * if warnings are errors, so leave newtype unset in that
-             * case
-             */
-            int ret = DEPRECATE("Data type alias 'a' was deprecated in NumPy 2.0. "
-                                "Use the 'S' alias instead.");
-            if (ret == 0) {
-                newtype = NPY_STRING;
-            }
-            break;
-        }
         case NPY_UNICODELTR:
             newtype = NPY_UNICODE;
             break;
@@ -1384,7 +1396,7 @@ PyArray_IntTupleFromIntp(int len, npy_intp const *vals)
 NPY_NO_EXPORT int
 _not_NoValue(PyObject *obj, PyObject **out)
 {
-    if (obj == npy_static_pydata._NoValue) {
+    if (obj == _npy_module_state->static_pydata._NoValue) {
         *out = NULL;
     }
     else {
@@ -1404,7 +1416,7 @@ PyArray_DeviceConverterOptional(PyObject *object, NPY_DEVICE *device)
     }
 
     if (PyUnicode_Check(object) &&
-        PyUnicode_Compare(object, npy_interned_str.cpu) == 0) {
+        PyUnicode_Compare(object, _npy_module_state->interned_str.cpu) == 0) {
         *device = NPY_DEVICE_CPU;
         return NPY_SUCCEED;
     }

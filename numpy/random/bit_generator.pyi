@@ -1,4 +1,5 @@
 import abc
+from _typeshed import Incomplete
 from collections.abc import Callable, Mapping, Sequence
 from threading import Lock
 from typing import (
@@ -7,14 +8,11 @@ from typing import (
     Literal,
     NamedTuple,
     Self,
-    TypeAlias,
     TypedDict,
     overload,
     type_check_only,
 )
-
-from _typeshed import Incomplete
-from typing_extensions import CapsuleType
+from typing_extensions import CapsuleType, disjoint_base
 
 import numpy as np
 from numpy._typing import (
@@ -30,7 +28,7 @@ __all__ = ["BitGenerator", "SeedSequence"]
 
 ###
 
-_DTypeLikeUint_: TypeAlias = _DTypeLike[np.uint32 | np.uint64] | _UInt32Codes | _UInt64Codes
+type _DTypeLikeUint_ = _DTypeLike[np.uint32 | np.uint64] | _UInt32Codes | _UInt64Codes
 
 @type_check_only
 class _SeedSeqState(TypedDict):
@@ -51,7 +49,7 @@ class _Interface(NamedTuple):
 @type_check_only
 class _CythonMixin:
     def __setstate_cython__(self, pyx_state: object, /) -> None: ...
-    def __reduce_cython__(self) -> Any: ...  # noqa: ANN401
+    def __reduce_cython__(self) -> Any: ...
 
 @type_check_only
 class _GenerateStateMixin(_CythonMixin):
@@ -70,6 +68,7 @@ class ISpawnableSeedSequence(ISeedSequence, abc.ABC):
 class SeedlessSeedSequence(_GenerateStateMixin, ISpawnableSeedSequence):
     def spawn(self, /, n_children: int) -> list[Self]: ...
 
+@disjoint_base
 class SeedSequence(_GenerateStateMixin, ISpawnableSeedSequence):
     __pyx_vtable__: ClassVar[CapsuleType] = ...
 
@@ -92,6 +91,7 @@ class SeedSequence(_GenerateStateMixin, ISpawnableSeedSequence):
     @property
     def state(self) -> _SeedSeqState: ...
 
+@disjoint_base
 class BitGenerator(_CythonMixin, abc.ABC):
     lock: Lock
     @property

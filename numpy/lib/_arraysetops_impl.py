@@ -15,19 +15,19 @@ Original author: Robert Cimrman
 
 """
 import functools
-import warnings
 from typing import NamedTuple
 
 import numpy as np
 from numpy._core import overrides
 from numpy._core._multiarray_umath import _array_converter, _unique_hash
+from numpy.lib.array_utils import normalize_axis_index
 
 array_function_dispatch = functools.partial(
     overrides.array_function_dispatch, module='numpy')
 
 
 __all__ = [
-    "ediff1d", "in1d", "intersect1d", "isin", "setdiff1d", "setxor1d",
+    "ediff1d", "intersect1d", "isin", "setdiff1d", "setxor1d",
     "union1d", "unique", "unique_all", "unique_counts", "unique_inverse",
     "unique_values"
 ]
@@ -290,7 +290,9 @@ def unique(ar, return_index=False, return_inverse=False,
 
     """
     ar = np.asanyarray(ar)
-    if axis is None:
+    if axis is None or ar.ndim == 1:
+        if axis is not None:
+            normalize_axis_index(axis, ar.ndim)
         ret = _unique1d(ar, return_index, return_inverse, return_counts,
                         equal_nan=equal_nan, inverse_shape=ar.shape, axis=None,
                         sorted=sorted)
@@ -368,7 +370,8 @@ def _unique1d(ar, return_index=False, return_inverse=False,
         conv = _array_converter(ar)
         ar_, = conv
 
-        if (hash_unique := _unique_hash(ar_)) is not NotImplemented:
+        if (hash_unique := _unique_hash(ar_, equal_nan=equal_nan)) \
+            is not NotImplemented:
             if sorted:
                 hash_unique.sort()
             # We wrap the result back in case it was a subclass of numpy.ndarray.
@@ -383,9 +386,11 @@ def _unique1d(ar, return_index=False, return_inverse=False,
         aux = ar
     mask = np.empty(aux.shape, dtype=np.bool)
     mask[:1] = True
-    if (equal_nan and aux.shape[0] > 0 and aux.dtype.kind in "cfmM" and
-            np.isnan(aux[-1])):
-        if aux.dtype.kind == "c":  # for complex all NaNs are considered equivalent
+    # Keep the last element typed so isnan handles StringDType's NA sentinel.
+    if (equal_nan and aux.shape[0] > 0 and aux.dtype.kind in "cfmMT" and
+            np.isnan(aux[-1:])[0]):
+        if aux.dtype.kind in "cT":
+            # Complex NaNs and StringDType's NaN-like sentinels are equivalent.
             aux_firstnan = np.searchsorted(np.isnan(aux), True, side='left')
         else:
             aux_firstnan = np.searchsorted(aux, aux[-1], side='left')
@@ -800,112 +805,7 @@ def setxor1d(ar1, ar2, assume_unique=False):
     return aux[flag[1:] & flag[:-1]]
 
 
-def _in1d_dispatcher(ar1, ar2, assume_unique=None, invert=None, *,
-                     kind=None):
-    return (ar1, ar2)
-
-
-@array_function_dispatch(_in1d_dispatcher)
-def in1d(ar1, ar2, assume_unique=False, invert=False, *, kind=None):
-    """
-    Test whether each element of a 1-D array is also present in a second array.
-
-    .. deprecated:: 2.0
-        Use :func:`isin` instead of `in1d` for new code.
-
-    Returns a boolean array the same length as `ar1` that is True
-    where an element of `ar1` is in `ar2` and False otherwise.
-
-    Parameters
-    ----------
-    ar1 : (M,) array_like
-        Input array.
-    ar2 : array_like
-        The values against which to test each value of `ar1`.
-    assume_unique : bool, optional
-        If True, the input arrays are both assumed to be unique, which
-        can speed up the calculation.  Default is False.
-    invert : bool, optional
-        If True, the values in the returned array are inverted (that is,
-        False where an element of `ar1` is in `ar2` and True otherwise).
-        Default is False. ``np.in1d(a, b, invert=True)`` is equivalent
-        to (but is faster than) ``np.invert(in1d(a, b))``.
-    kind : {None, 'sort', 'table'}, optional
-        The algorithm to use. This will not affect the final result,
-        but will affect the speed and memory use. The default, None,
-        will select automatically based on memory considerations.
-
-        * If 'sort', will use a mergesort-based approach. This will have
-          a memory usage of roughly 6 times the sum of the sizes of
-          `ar1` and `ar2`, not accounting for size of dtypes.
-        * If 'table', will use a lookup table approach similar
-          to a counting sort. This is only available for boolean and
-          integer arrays. This will have a memory usage of the
-          size of `ar1` plus the max-min value of `ar2`. `assume_unique`
-          has no effect when the 'table' option is used.
-        * If None, will automatically choose 'table' if
-          the required memory allocation is less than or equal to
-          6 times the sum of the sizes of `ar1` and `ar2`,
-          otherwise will use 'sort'. This is done to not use
-          a large amount of memory by default, even though
-          'table' may be faster in most cases. If 'table' is chosen,
-          `assume_unique` will have no effect.
-
-    Returns
-    -------
-    in1d : (M,) ndarray, bool
-        The values `ar1[in1d]` are in `ar2`.
-
-    See Also
-    --------
-    isin                  : Version of this function that preserves the
-                            shape of ar1.
-
-    Notes
-    -----
-    `in1d` can be considered as an element-wise function version of the
-    python keyword `in`, for 1-D sequences. ``in1d(a, b)`` is roughly
-    equivalent to ``np.array([item in b for item in a])``.
-    However, this idea fails if `ar2` is a set, or similar (non-sequence)
-    container:  As ``ar2`` is converted to an array, in those cases
-    ``asarray(ar2)`` is an object array rather than the expected array of
-    contained values.
-
-    Using ``kind='table'`` tends to be faster than `kind='sort'` if the
-    following relationship is true:
-    ``log10(len(ar2)) > (log10(max(ar2)-min(ar2)) - 2.27) / 0.927``,
-    but may use greater memory. The default value for `kind` will
-    be automatically selected based only on memory usage, so one may
-    manually set ``kind='table'`` if memory constraints can be relaxed.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> test = np.array([0, 1, 2, 5, 0])
-    >>> states = [0, 2]
-    >>> mask = np.in1d(test, states)
-    >>> mask
-    array([ True, False,  True, False,  True])
-    >>> test[mask]
-    array([0, 2, 0])
-    >>> mask = np.in1d(test, states, invert=True)
-    >>> mask
-    array([False,  True, False,  True, False])
-    >>> test[mask]
-    array([1, 5])
-    """
-
-    # Deprecated in NumPy 2.0, 2023-08-18
-    warnings.warn(
-        "`in1d` is deprecated. Use `np.isin` instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-
-    return _in1d(ar1, ar2, assume_unique, invert, kind=kind)
-
-
-def _in1d(ar1, ar2, assume_unique=False, invert=False, *, kind=None):
+def _isin(ar1, ar2, assume_unique=False, invert=False, *, kind=None):
     # Ravel both arrays, behavior for the first array could be different
     ar1 = np.asarray(ar1).ravel()
     ar2 = np.asarray(ar2).ravel()
@@ -1009,14 +909,53 @@ def _in1d(ar1, ar2, assume_unique=False, invert=False, *, kind=None):
             "Please select 'sort' or None for kind."
         )
 
-    # Check if one of the arrays may contain arbitrary objects
-    contains_object = ar1.dtype.hasobject or ar2.dtype.hasobject
+    string_dtype = None
+    if (ar1.dtype.kind == "T" or ar2.dtype.kind == "T") and (
+            ar1.dtype.kind in "TU" and ar2.dtype.kind in "TU"):
+        try:
+            # promote to the result dtype so we can use the fast hashing path
+            string_dtype = np.result_type(ar1, ar2)
+        except TypeError:
+            # fall back to slow sorting path with e.g. ar1.na_object == None
+            # and ar2.na_object == np.nan
+            pass
 
-    # This code is run when
-    # a) the first condition is true, making the code significantly faster
-    # b) the second condition is true (i.e. `ar1` or `ar2` may contain
-    #    arbitrary objects), since then sorting is not guaranteed to work
-    if len(ar2) < 10 * len(ar1) ** 0.145 or contains_object:
+    # Check if one of the arrays may contain arbitrary objects
+    contains_object = (ar1.dtype.hasobject or ar2.dtype.hasobject) and (
+        string_dtype is None)
+
+    scalar_comparisons_are_faster = len(ar2) < 10 * len(ar1) ** 0.145
+    result = None
+    # Remove non-NaN missing values before sorting. Non-string sentinels
+    # cannot be ordered with strings. String sentinels are sortable, but
+    # filtering is faster when missing values are common and adds only a
+    # small overhead otherwise.
+    if (not scalar_comparisons_are_faster and string_dtype is not None and
+            string_dtype._has_na and not string_dtype._has_nan_na):
+        na = np.asarray(string_dtype.na_object, dtype=string_dtype)
+        missing1, missing2 = ar1 == na, ar2 == na
+        has_missing2 = missing2.any()
+        if missing1.any():
+            result = np.full(
+                ar1.shape, has_missing2 != invert, dtype=bool)
+            valid1 = ~missing1
+            ar1 = ar1[valid1]
+        if has_missing2:
+            ar2 = ar2[~missing2]
+        # Filtering can make scalar comparisons cheaper than sorting.
+        scalar_comparisons_are_faster = len(ar2) < 10 * len(ar1) ** 0.145
+
+    # Use direct comparisons for few candidates or arbitrary objects, which
+    # cannot be sorted reliably.
+    if scalar_comparisons_are_faster or contains_object:
+        if string_dtype is not None:
+            # StringDType scalars are str or na_object, so ensure iteration
+            # always produces arrays this could be deleted if StringDType ever
+            # grew a NumPy scalar type
+            ar2 = ar2.reshape(-1, 1)
+            if ar2.dtype.kind == "T" and ar2.dtype._has_nan_na:
+                na_object = ar2.dtype.na_object
+                ar2 = (a for a in ar2 if a[0] is not na_object)
         if invert:
             mask = np.ones(len(ar1), dtype=bool)
             for a in ar2:
@@ -1025,9 +964,16 @@ def _in1d(ar1, ar2, assume_unique=False, invert=False, *, kind=None):
             mask = np.zeros(len(ar1), dtype=bool)
             for a in ar2:
                 mask |= (ar1 == a)
-        return mask
+    else:
+        mask = _isin_sorting(ar1, ar2, assume_unique, invert)
 
-    # Otherwise use sorting
+    if result is not None:
+        result[valid1] = mask
+        return result
+    return mask
+
+
+def _isin_sorting(ar1, ar2, assume_unique, invert):
     if not assume_unique:
         ar1, rev_idx = np.unique(ar1, return_inverse=True)
         ar2 = np.unique(ar2)
@@ -1174,7 +1120,7 @@ def isin(element, test_elements, assume_unique=False, invert=False, *,
            [ True, False]])
     """
     element = np.asarray(element)
-    return _in1d(element, test_elements, assume_unique=assume_unique,
+    return _isin(element, test_elements, assume_unique=assume_unique,
                  invert=invert, kind=kind).reshape(element.shape)
 
 
@@ -1257,4 +1203,4 @@ def setdiff1d(ar1, ar2, assume_unique=False):
     else:
         ar1 = unique(ar1)
         ar2 = unique(ar2)
-    return ar1[_in1d(ar1, ar2, assume_unique=True, invert=True)]
+    return ar1[_isin(ar1, ar2, assume_unique=True, invert=True)]

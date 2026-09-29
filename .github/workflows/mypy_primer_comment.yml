@@ -1,24 +1,25 @@
 name: Comment with mypy_primer diff
 
-on:
+on: # zizmor: ignore[dangerous-triggers] no PR-head checkout, no code execution; artifact trusted by convention, worst case is a comment on the wrong PR
   workflow_run:
     workflows:
       - Run mypy_primer
     types:
       - completed
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
   comment:
     name: Comment PR from mypy_primer
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Download diffs
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -42,23 +43,23 @@ jobs:
 
       - name: Get PR number
         id: get-pr-number
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           script: |
             const fs = require('fs');
             return parseInt(fs.readFileSync("pr_number.txt", { encoding: "utf8" }))
 
       - name: Hide old comments
-        uses: kanga333/comment-hider@c12bb20b48aeb8fc098e35967de8d4f8018fffdf  # v0.4.0
+        uses: int128/hide-comment-action@7fecc6d1ad98c77285dd0b705753e5a8de1970bf  # v1.74.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          issue_number: ${{ steps.get-pr-number.outputs.result }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ steps.get-pr-number.outputs.result }}
 
       - run: cat diff_*.txt | tee fulldiff.txt
 
       - name: Post comment
         id: post-comment
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
