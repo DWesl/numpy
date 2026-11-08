@@ -237,7 +237,6 @@ def set_printoptions(precision=None, threshold=None, edgeitems=None,
         Unrecognized strings will be ignored with a warning for forward
         compatibility.
 
-        .. versionchanged:: 1.22.0
         .. versionchanged:: 2.2
 
     override_repr: callable, optional
@@ -1017,8 +1016,7 @@ class FloatingFormat:
         # choose exponential mode based on the non-zero finite values:
         abs_non_zero = absolute(finite_vals[finite_vals != 0])
         if len(abs_non_zero) != 0:
-            max_val = np.max(abs_non_zero)
-            min_val = np.min(abs_non_zero)
+            min_val, max_val = np.minmax(abs_non_zero)
             if self._legacy <= 202:
                 exp_cutoff_max = 1.e8
             else:
@@ -1184,8 +1182,6 @@ def format_float_scientific(x, precision=None, unique=True, trim='k',
         `unique=True`. In that case more digits than necessary to uniquely
         identify the value may be printed and rounded unbiased.
 
-        .. versionadded:: 1.21.0
-
     Returns
     -------
     rep : string
@@ -1272,8 +1268,6 @@ def format_float_positional(x, precision=None, unique=True,
         in which case additional digits past those necessary to uniquely
         identify the value may be printed, rounding the last additional digit.
 
-        .. versionadded:: 1.21.0
-
     Returns
     -------
     rep : string
@@ -1312,8 +1306,7 @@ def format_float_positional(x, precision=None, unique=True,
 class IntegerFormat:
     def __init__(self, data, sign='-'):
         if data.size > 0:
-            data_max = np.max(data)
-            data_min = np.min(data)
+            data_min, data_max = np.minmax(data)
             data_max_str_len = len(str(data_max))
             if sign == ' ' and data_min < 0:
                 sign = '-'
@@ -1376,8 +1369,9 @@ class _TimelikeFormat:
         non_nat = data[~isnat(data)]
         if len(non_nat) > 0:
             # Max str length of non-NaT elements
-            max_str_len = max(len(self._format_non_nat(np.max(non_nat))),
-                              len(self._format_non_nat(np.min(non_nat))))
+            non_nat_min, non_nat_max = np.minmax(non_nat)
+            max_str_len = max(len(self._format_non_nat(non_nat_max)),
+                              len(self._format_non_nat(non_nat_min)))
         else:
             max_str_len = 0
         if len(non_nat) < data.size:

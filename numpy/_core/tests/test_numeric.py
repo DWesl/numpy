@@ -17,6 +17,8 @@ from numpy.exceptions import AxisError
 from numpy.random import rand, randint, randn
 from numpy.testing import (
     HAS_REFCOUNT,
+    IS_64BIT,
+    IS_PYPY,
     IS_WASM,
     assert_,
     assert_almost_equal,
@@ -28,7 +30,7 @@ from numpy.testing import (
     assert_raises_regex,
 )
 from numpy.testing._private.hypothesis_helpers import HAS_HYPOTHESIS, given, hynp, st
-from numpy.testing._private.utils import longdouble_fpe_mark
+from numpy.testing._private.utils import longdouble_fpe_mark, requires_memory
 
 
 class TestResize:
@@ -153,6 +155,17 @@ class TestNonarrayArgs:
     def test_ptp(self):
         a = [3, 4, 5, 10, -3, -5, 6.0]
         assert_equal(np.ptp(a, axis=0), 15.0)
+
+    @pytest.mark.parametrize("axis, out_index", [
+        (0, (0,)), (0, (1,)), (1, (slice(None), 0)), (1, (slice(None), 1)),
+    ])
+    def test_ptp_out_overlaps_input(self, axis, out_index):
+        a = np.array([[1., 2.], [5., 10.]])
+        expected = np.ptp(a, axis=axis)
+        out = a[out_index]
+        res = np.ptp(a, axis=axis, out=out)
+        assert res is out
+        assert_equal(res, expected)
 
     def test_prod(self):
         arr = [[1, 2, 3, 4],
@@ -1674,6 +1687,18 @@ class TestWrapFunc:
 
 
 class TestNonzero:
+    @pytest.mark.skipif(not IS_64BIT, reason="test requires 64-bit system")
+    @requires_memory(free_bytes=2.2e9)
+    @pytest.mark.parametrize("dtype", [
+        [("x", "u1", 2**31 + 2)],
+         "V2147483650",
+        ])
+    def test_nonzero_large_dtype(self, dtype):
+        # gh-32809
+        a = np.zeros(1, dtype)
+        a.view(np.uint8)[-1] = 1
+        assert np.count_nonzero(a) == 1
+
     def test_nonzero_trivial(self):
         assert_equal(np.count_nonzero(np.array([])), 0)
         assert_equal(np.count_nonzero(np.array([], dtype='?')), 0)
@@ -4245,6 +4270,7 @@ class TestBroadcast:
             np.broadcast([[1, 2, 3]], [[4], [5]], [6, 7])
 
     @pytest.mark.skipif(sys.flags.optimize == 2, reason="Python running -OO")
+    @pytest.mark.xfail(IS_PYPY, reason="PyPy does not modify tp_doc")
     def test_signatures(self):
         sig_new = inspect.signature(np.broadcast)
         assert len(sig_new.parameters) == 1

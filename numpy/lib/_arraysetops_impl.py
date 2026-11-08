@@ -221,13 +221,12 @@ def unique(ar, return_index=False, return_inverse=False,
     flattened subarrays are sorted in lexicographic order starting with the
     first element.
 
-    .. versionchanged:: 1.21
-        Like np.sort, NaN will sort to the end of the values.
-        For complex arrays all NaN values are considered equivalent
-        (no matter whether the NaN is in the real or imaginary part).
-        As the representant for the returned array the smallest one in the
-        lexicographical order is chosen - see np.sort for how the lexicographical
-        order is defined for complex arrays.
+    Like np.sort, NaN will sort to the end of the values.
+    For complex arrays all NaN values are considered equivalent
+    (no matter whether the NaN is in the real or imaginary part).
+    As the representant for the returned array the smallest one in the
+    lexicographical order is chosen - see np.sort for how the lexicographical
+    order is defined for complex arrays.
 
     .. versionchanged:: 2.0
         For multi-dimensional inputs, ``unique_inverse`` is reshaped
@@ -835,8 +834,7 @@ def _isin(ar1, ar2, assume_unique=False, invert=False, *, kind=None):
         if ar2.dtype == bool:
             ar2 = ar2.astype(np.uint8)
 
-        ar2_min = int(np.min(ar2))
-        ar2_max = int(np.max(ar2))
+        ar2_min, ar2_max = map(int, np.minmax(ar2))
 
         ar2_range = ar2_max - ar2_min
 
