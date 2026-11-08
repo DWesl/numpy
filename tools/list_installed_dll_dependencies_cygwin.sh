@@ -29,7 +29,7 @@ do
     ext_module=`echo ${name} | \
                      sed -E \
 			 -e "s/^\/+(home|usr).*?site-packages\/+//" \
-			 -e "s/.cpython-3.m?-x86(_64)?-cygwin.dll$//" \
+			 -e "s/.cpython-3[0-9]{1,2}m?-x86(_64)?-cygwin.dll$//" \
 			 -e "s/\//./g"`
     /usr/bin/timeout 2m /usr/bin/python${py_ver} -c "import ${ext_module}"
 done
